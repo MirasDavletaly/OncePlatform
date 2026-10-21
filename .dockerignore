@@ -1,0 +1,11 @@
+.env
+.git
+bin
+web/node_modules
+web/dist
+internal/webui/dist
+*.exe
+docs
+**/.env
+OncePlatform-synology.zip
+OncePlatform-synology-update.zip

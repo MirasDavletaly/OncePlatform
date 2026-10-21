@@ -1,0 +1,31 @@
+# Caddy: automatic HTTPS (Let's Encrypt) for {$DOMAIN} and reverse proxy to the portal.
+# Without DOMAIN in .env, Caddy serves only https://localhost with its internal
+# certificate and the portal is reached directly at http://<IP>:8080.
+
+{
+	# Uncomment and set a real address to receive certificate expiry notices.
+	# email admin@example.kz
+}
+
+{$DOMAIN:localhost} {
+	encode zstd gzip
+
+	# Must exceed UPLOAD_MAX_MB (multipart overhead); the portal enforces the exact limit.
+	request_body {
+		max_size {$CADDY_MAX_BODY:120MB}
+	}
+
+	reverse_proxy app:8080 {
+		# Stream MCP and long downloads without buffering.
+		flush_interval -1
+		transport http {
+			read_timeout 10m
+			write_timeout 10m
+		}
+	}
+
+	log {
+		output stdout
+		format json
+	}
+}

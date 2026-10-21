@@ -1,0 +1,96 @@
+# OncePlatform: portal (app), PostgreSQL (db), HTTPS proxy (caddy) and daily backups (backup).
+# Start: docker compose up -d --build      Settings: .env (copy from .env.example)
+
+name: onceplatform
+
+services:
+  db:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-portal}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Укажите POSTGRES_PASSWORD в .env}
+      POSTGRES_DB: ${POSTGRES_DB:-portal}
+      TZ: UTC
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+      start_period: 10s
+    logging: &logging
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "5"
+
+  app:
+    build:
+      context: .
+      args:
+        VERSION: ${APP_VERSION:-1.0.0}
+    image: onceplatform/app:latest
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      DATABASE_URL: ${DATABASE_URL:-postgres://${POSTGRES_USER:-portal}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB:-portal}?sslmode=disable}
+      STORAGE_PATH: /data/uploads
+      LISTEN_ADDR: ":8080"
+    depends_on:
+      db:
+        condition: service_healthy
+    volumes:
+      - uploads:/data/uploads
+    ports:
+      # Direct access without a domain: http://<IP>:8080 (first-time check).
+      # After the domain works over HTTPS, set HTTP_PORT_BIND=127.0.0.1:8080 in .env.
+      - "${HTTP_PORT_BIND:-8080}:8080"
+    logging: *logging
+
+  caddy:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    environment:
+      DOMAIN: ${DOMAIN:-}
+      CADDY_MAX_BODY: ${CADDY_MAX_BODY:-120MB}
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"
+    volumes:
+      - ./deploy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on:
+      - app
+    logging: *logging
+
+  backup:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    entrypoint: ["/bin/sh", "/scripts/backup.sh", "--loop"]
+    environment:
+      PGHOST: db
+      PGUSER: ${POSTGRES_USER:-portal}
+      PGPASSWORD: ${POSTGRES_PASSWORD}
+      PGDATABASE: ${POSTGRES_DB:-portal}
+      BACKUP_RETENTION_DAYS: ${BACKUP_RETENTION_DAYS:-14}
+      BACKUP_TIME: ${BACKUP_TIME:-02:30}
+      TZ: ${APP_TIMEZONE:-Asia/Almaty}
+    volumes:
+      - ./scripts:/scripts:ro
+      - uploads:/data/uploads
+      - backups:/backups
+    depends_on:
+      db:
+        condition: service_healthy
+    logging: *logging
+
+volumes:
+  pgdata:
+  uploads:
+  backups:
+  caddy_data:
+  caddy_config:

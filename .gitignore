@@ -1,0 +1,54 @@
+# Secrets
+.env
+
+# Build output
+/bin/
+/internal/webui/dist/
+/web/node_modules/
+/web/dist/
+*.exe
+
+# OS / editors
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+/OncePlatform-synology.zip
+/deploy/synology/backups/
+/deploy/synology/*.log
+/OncePlatform-synology-update.zip
+
+# Local secrets, state, dependencies, and generated packages
+.env
+.env.*
+!.env.example
+!.env.sample
+!.env.template
+node_modules/
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+.test-output/
+.dev-cert/
+*.pem
+*.key
+*.pfx
+*.p12
+*.db
+*.sqlite
+*.sqlite3
+*.log
+logs/
+data/
+state/
+backups/
+build/
+dist/
+dist-deploy/
+release/
+*.zip
+*.tar
+*.tar.gz
+*.exe
+ADMIN-LINK.txt

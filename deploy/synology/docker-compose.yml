@@ -1,0 +1,115 @@
+# OncePlatform on Synology (Container Manager) with its own Tailscale machine.
+#
+# The portal joins your tailnet as a separate machine named TS_HOSTNAME
+# (default "algoritmi") and is served over HTTPS at
+#   https://<TS_HOSTNAME>.<your-tailnet>.ts.net
+# by Tailscale Serve (certificates are issued by Tailscale automatically).
+# Caddy is not used here: DSM already occupies ports 80 and 443.
+#
+# Settings: a .env file NEXT TO THIS FILE (deploy/synology/.env), copied from
+# the project's .env.example — Docker Compose reads it from this directory.
+#
+# Start: DSM Task Scheduler → user-defined script (root):
+#          bash /volume1/docker/onceplatform/deploy/synology/start.sh
+#        or over SSH: sudo bash .../deploy/synology/start.sh
+#
+# File format 2.4 works with the legacy docker-compose 1.x shipped with the
+# Synology "Docker" package as well as with Docker Compose v2.
+
+version: "2.4"
+
+services:
+  db:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-portal}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}
+      POSTGRES_DB: ${POSTGRES_DB:-portal}
+      TZ: UTC
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+      start_period: 10s
+    logging: &logging
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "5"
+
+  app:
+    build:
+      context: ../..
+      args:
+        VERSION: ${APP_VERSION:-1.0.0}
+    image: onceplatform/app:latest
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      # The portal builds the database address from POSTGRES_* in .env
+      # (host "db") when DATABASE_URL is empty.
+      POSTGRES_HOST: db
+      STORAGE_PATH: /data/uploads
+      LISTEN_ADDR: ":8080"
+    depends_on:
+      db:
+        condition: service_healthy
+    volumes:
+      - uploads:/data/uploads
+    ports:
+      # Optional access from the local network: http://<NAS-IP>:8080.
+      # Set HTTP_PORT_BIND=127.0.0.1:8080 in .env to allow access only via Tailscale.
+      - "${HTTP_PORT_BIND:-8080}:8080"
+    logging: *logging
+
+  tailscale:
+    image: tailscale/tailscale:stable
+    hostname: ${TS_HOSTNAME:-algoritmi}
+    restart: unless-stopped
+    environment:
+      TS_AUTHKEY: ${TS_AUTHKEY:?Set TS_AUTHKEY in .env (Tailscale admin console → Settings → Keys)}
+      TS_HOSTNAME: ${TS_HOSTNAME:-algoritmi}
+      TS_STATE_DIR: /var/lib/tailscale
+      TS_AUTH_ONCE: "true"
+      # Userspace networking: no /dev/net/tun or extra capabilities needed on DSM.
+      TS_USERSPACE: "true"
+      TS_SERVE_CONFIG: /config/serve.json
+    volumes:
+      - tailscale_state:/var/lib/tailscale
+      # Mounted as a directory so that edits to serve.json are picked up live.
+      - ./tailscale:/config:ro
+    depends_on:
+      - app
+    logging: *logging
+
+  backup:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    entrypoint: ["/bin/sh", "/scripts/backup.sh", "--loop"]
+    environment:
+      PGHOST: db
+      PGUSER: ${POSTGRES_USER:-portal}
+      PGPASSWORD: ${POSTGRES_PASSWORD}
+      PGDATABASE: ${POSTGRES_DB:-portal}
+      BACKUP_RETENTION_DAYS: ${BACKUP_RETENTION_DAYS:-14}
+      BACKUP_TIME: ${BACKUP_TIME:-02:30}
+      TZ: ${APP_TIMEZONE:-Asia/Almaty}
+    volumes:
+      - ../../scripts:/scripts:ro
+      - uploads:/data/uploads
+      # Daily archives are written to deploy/synology/backups on the NAS,
+      # visible in File Station and easy to include in Hyper Backup.
+      - ./backups:/backups
+    depends_on:
+      db:
+        condition: service_healthy
+    logging: *logging
+
+volumes:
+  pgdata:
+  uploads:
+  tailscale_state:
