@@ -1,4 +1,8 @@
-import { useState, type FormEvent } from 'react'
+import { Link } from 'react-router'
+import { api } from '../lib/api'
+import { shortlistValues, shortlistPayload, type ShortlistValues } from '../lib/shortlist'
+import { ShortlistFields } from './Shortlist'
+import { useEffect, useState, type FormEvent } from 'react'
 import { FileSpreadsheet, FileText, FileType2, X } from 'lucide-react'
 import { fmt, t } from '../i18n'
 import { formatSize, toLocalInput } from '../lib/format'
@@ -18,7 +22,7 @@ function fileIcon(name: string) {
   return <FileText className="size-4 text-info" aria-hidden />
 }
 
-export interface TicketFormValues {
+export interface TicketFormValues extends ShortlistValues {
   title: string
   priority: string
   source_url: string
@@ -29,6 +33,7 @@ export interface TicketFormValues {
 
 export function valuesFromTicket(tk?: Ticket): TicketFormValues {
   return {
+    ...shortlistValues(tk),
     title: tk?.title ?? '',
     priority: tk?.priority ?? 'normal',
     source_url: tk?.source_url ?? '',
@@ -40,7 +45,8 @@ export function valuesFromTicket(tk?: Ticket): TicketFormValues {
 
 /** API payload; "" assigns the task to everyone and clears the deadline/link. */
 export function payloadFromValues(v: TicketFormValues, withDescription = true) {
-  const p: Record<string, string> = {
+  const p: Record<string, string | number | null> = {
+    ...shortlistPayload(v),
     title: v.title,
     priority: v.priority,
     source_url: v.source_url,
@@ -57,6 +63,7 @@ export function payloadFromValues(v: TicketFormValues, withDescription = true) {
  */
 export function TicketForm({
   initial,
+  ticketId,
   submitLabel,
   onSubmit,
   onCancel,
@@ -66,6 +73,7 @@ export function TicketForm({
   withFiles = false,
   progress,
 }: {
+  ticketId?: string
   initial: TicketFormValues
   submitLabel: string
   onSubmit: (v: TicketFormValues, files: File[]) => void
@@ -80,6 +88,24 @@ export function TicketForm({
 }) {
   const { meta } = useSession()
   const [v, setV] = useState(initial)
+  const [duplicate, setDuplicate] = useState<{ number: string; title: string } | null>(null)
+  const [checking, setChecking] = useState(false)
+  const [checkFailed, setCheckFailed] = useState(false)
+  useEffect(() => {
+    setDuplicate(null)
+    setCheckFailed(false)
+    if (!v.source_url.trim() || (ticketId && v.source_url === initial.source_url)) { setChecking(false); return }
+    let active = true
+    setChecking(true)
+    const timer = setTimeout(() => {
+      const params = new URLSearchParams({ source_url: v.source_url, ...(ticketId ? { exclude_id: ticketId } : {}) })
+      api.get<{ duplicate: { number: string; title: string } | null }>('/tickets/source-check?' + params)
+        .then((data) => { if (active) setDuplicate(data.duplicate) })
+        .catch(() => { if (active) setCheckFailed(true) })
+        .finally(() => { if (active) setChecking(false) })
+    }, 350)
+    return () => { active = false; clearTimeout(timer) }
+  }, [v.source_url, ticketId, initial.source_url, error])
   const [files, setFiles] = useState<File[]>([])
   const [fileError, setFileError] = useState('')
   const set = <K extends keyof TicketFormValues>(k: K, val: TicketFormValues[K]) => setV((s) => ({ ...s, [k]: val }))
@@ -100,7 +126,7 @@ export function TicketForm({
 
   const submit = (e: FormEvent) => {
     e.preventDefault()
-    onSubmit(v, files)
+    if (!duplicate) onSubmit(v, files)
   }
 
   return (
@@ -141,6 +167,14 @@ export function TicketForm({
           onChange={(e) => set('source_url', e.target.value)}
         />
       </Field>
+
+      {checking && <p role="status" className="text-sm text-muted">{t.shortlist.checking}</p>}
+      {checkFailed && <p role="status" className="text-sm text-muted">{t.shortlist.checkFailed}</p>}
+      {duplicate && <p role="alert" className="rounded-lg bg-gold-soft p-3 text-sm">
+        {t.shortlist.duplicate} <Link className="text-accent underline" to={'/tickets/' + duplicate.number}>{duplicate.number} — {duplicate.title}</Link>
+      </p>}
+
+      <ShortlistFields value={v} set={set} />
 
       <Field label={t.ticket.deadline} htmlFor="f-deadline" hint={fmt(t.ticket.deadlineHint, { tz: meta.timezone })}>
         <Input
@@ -203,7 +237,7 @@ export function TicketForm({
 
       <div className="flex flex-wrap justify-end gap-2">
         {onCancel && <Button onClick={onCancel}>{t.common.cancel}</Button>}
-        <Button type="submit" variant="primary" loading={busy} disabled={!v.title.trim()}>
+        <Button type="submit" variant="primary" loading={busy} disabled={!v.title.trim() || !!duplicate}>
           {submitLabel}
         </Button>
       </div>

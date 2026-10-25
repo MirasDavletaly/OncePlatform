@@ -1,3 +1,5 @@
+import { ShortlistSummary } from '../components/Shortlist'
+import { submissionPending } from '../lib/shortlist'
 import { useMemo, useState, type ReactNode } from 'react'
 import { Link, useSearchParams } from 'react-router'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
@@ -34,7 +36,7 @@ interface Column {
 }
 
 function Card({ tk, overlay }: { tk: Ticket; overlay?: boolean }) {
-  const u = urgency(tk.deadline, tk.status === 'closed')
+  const u = urgency(tk.deadline, !submissionPending(tk.status))
   return (
     <div
       className={cn(
@@ -55,13 +57,14 @@ function Card({ tk, overlay }: { tk: Ticket; overlay?: boolean }) {
       >
         {tk.title}
       </Link>
+      <ShortlistSummary ticket={tk} />
       {tk.status === 'closed' && tk.close_result && (
         <p className={cn('mt-1 text-[12px] font-medium', tk.close_result === 'won' ? 'text-ok' : 'text-muted')}>
           {t.result[tk.close_result]}
         </p>
       )}
       <div className="mt-2.5 flex flex-wrap items-center gap-x-3 gap-y-1">
-        <DeadlineBadge deadline={tk.deadline} closed={tk.status === 'closed'} />
+        <DeadlineBadge deadline={tk.deadline} closed={!submissionPending(tk.status)} />
       </div>
       <div className="mt-2 flex items-center justify-between gap-2 text-[12px] text-muted">
         <span className={cn('truncate', !tk.assignee_name && 'text-accent')}>{tk.assignee_name ?? t.common.everyone}</span>

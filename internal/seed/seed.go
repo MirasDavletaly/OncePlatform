@@ -32,10 +32,11 @@ type comment struct {
 }
 
 type step struct {
-	to      workflow.Status
-	by      workflow.Actor
-	comment string
-	result  workflow.CloseResult
+	to         workflow.Status
+	by         workflow.Actor
+	comment    string
+	result     workflow.CloseResult
+	lossReason string
 }
 
 type demoTicket struct {
@@ -97,8 +98,8 @@ func Demo(ctx context.Context, s Services) error {
 	}
 	user := func(a workflow.Actor) *string { id := a.UserID; return &id }
 
-	toSolution := []step{{workflow.StatusAnalysis, coord, "", ""}, {workflow.StatusSolution, analyst, "", ""}}
-	toSent := append(append([]step{}, toSolution...), step{workflow.StatusSent, analyst, "", ""})
+	toSolution := []step{{workflow.StatusAnalysis, coord, "", "", ""}, {workflow.StatusSolution, analyst, "", "", ""}}
+	toSent := append(append([]step{}, toSolution...), step{workflow.StatusSent, analyst, "", "", ""})
 
 	list := []demoTicket{
 		{in: tickets.CreateInput{Title: "AI chatbot for citizen requests (Kazakh and Russian)",
@@ -119,7 +120,7 @@ func Demo(ctx context.Context, s Services) error {
 		{in: tickets.CreateInput{Title: "Tech Garden: electricity consumption forecasting",
 			Description: "Astana Hub technology task from an energy company: hourly consumption forecast per substation with MAPE < 5%.",
 			SourceURL:   "https://astanahub.com", Deadline: deadline(6, 18), Priority: "high"},
-			steps:    []step{{workflow.StatusAnalysis, coord, "", ""}},
+			steps:    []step{{workflow.StatusAnalysis, coord, "", "", ""}},
 			comments: []comment{{admin, "Interesting one, high priority. Everyone — please estimate the effort by Friday."}},
 		},
 		{in: tickets.CreateInput{Title: "Supply and installation of metering system for 12 substations",
@@ -137,12 +138,12 @@ func Demo(ctx context.Context, s Services) error {
 			Description: "Price offers for a document management system for 150 users.",
 			SourceURL:   "https://goszakup.gov.kz/ru/announce/index/15601234", Deadline: deadline(-20, 10),
 			Priority: "normal", AssigneeID: user(analyst)},
-			steps:    append(append([]step{}, toSent...), step{workflow.StatusClosed, admin, "", workflow.ResultWon}),
+			steps:    append(append([]step{}, toSent...), step{workflow.StatusClosed, admin, "", workflow.ResultWon, ""}),
 			comments: []comment{{admin, "We won! The contract is being signed. Thank you, team."}},
 		},
 		{in: tickets.CreateInput{Title: "Server infrastructure upgrade",
 			Description: "Supply of server hardware and virtualization.", Deadline: deadline(-35, 10), Priority: "low"},
-			steps:    append(append([]step{}, toSent...), step{workflow.StatusClosed, admin, "", workflow.ResultLost}),
+			steps:    append(append([]step{}, toSent...), step{workflow.StatusClosed, admin, "Lost on price: the winner went 18% lower.", workflow.ResultLost, "price"}),
 			comments: []comment{{analyst, "Lost on price: the winner went 18% lower."}},
 		},
 		{in: tickets.CreateInput{Title: "Computer vision for PPE control at a plant",
@@ -157,18 +158,18 @@ func Demo(ctx context.Context, s Services) error {
 		{in: tickets.CreateInput{Title: "Commercial proposal template 2026",
 			Description: "Update the proposal template: new company details, case studies, an AI section.",
 			Priority:    "low", AssigneeID: user(coord)},
-			steps: []step{{workflow.StatusAnalysis, coord, "", ""}},
+			steps: []step{{workflow.StatusAnalysis, coord, "", "", ""}},
 		},
 		{in: tickets.CreateInput{Title: "Mobile app for doctor appointments",
 			Description: "iOS/Android app integrated with the clinic information system.",
 			Deadline:    deadline(4, 18), Priority: "normal", AssigneeID: user(analyst)},
-			steps: []step{{workflow.StatusAnalysis, coord, "", ""}, {workflow.StatusSolution, analyst, "", ""},
-				{workflow.StatusAnalysis, analyst, "The customer sent a new version of the specification; the integration requirements need re-checking.", ""}},
+			steps: []step{{workflow.StatusAnalysis, coord, "", "", ""}, {workflow.StatusSolution, analyst, "", "", ""},
+				{workflow.StatusAnalysis, analyst, "The customer sent a new version of the specification; the integration requirements need re-checking.", "", ""}},
 		},
 		{in: tickets.CreateInput{Title: "Open data portal development",
 			Description: "The tender was cancelled by the customer after the clarifications were published.",
 			Deadline:    deadline(-10, 10), Priority: "normal"},
-			steps: []step{{workflow.StatusAnalysis, coord, "", ""}, {workflow.StatusClosed, admin, "", workflow.ResultCancelled}},
+			steps: []step{{workflow.StatusAnalysis, coord, "", "", ""}, {workflow.StatusClosed, admin, "", workflow.ResultCancelled, ""}},
 		},
 		{in: tickets.CreateInput{Title: "Consultation on the Astana Hub acceleration program",
 			Description: "A client wants to understand the Tech Garden participation requirements.",
@@ -188,7 +189,7 @@ func Demo(ctx context.Context, s Services) error {
 			}
 		}
 		for _, st := range dt.steps {
-			if _, err := s.Tickets.ChangeStatus(ctx, st.by, t.ID, st.to, st.comment, st.result); err != nil {
+			if _, err := s.Tickets.ChangeStatus(ctx, st.by, t.ID, st.to, st.comment, st.result, st.lossReason); err != nil {
 				return fmt.Errorf("demo status %s→%s: %w", t.Number, st.to, err)
 			}
 		}

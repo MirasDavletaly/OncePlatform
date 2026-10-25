@@ -4,7 +4,7 @@ import { fmt, t } from '../i18n'
 import { api, errorMessage } from '../lib/api'
 import type { CloseResult, Status, Ticket } from '../lib/types'
 import { cn } from '../lib/utils'
-import { Button, Field, Modal, Textarea, useToast } from './ui'
+import { Button, Field, Modal, Select, Textarea, useToast } from './ui'
 
 const ORDER: Status[] = ['new', 'analysis', 'solution', 'sent', 'closed']
 const RESULTS: CloseResult[] = ['won', 'lost', 'cancelled', 'no_bid']
@@ -30,13 +30,14 @@ export function useStatusChange(): {
   const toast = useToast()
   const [pending, setPending] = useState<Pending | null>(null)
   const [result, setResult] = useState<CloseResult | ''>('')
+  const [lossReason, setLossReason] = useState('')
   const [comment, setComment] = useState('')
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
   const pendingRef = useRef<Pending | null>(null)
 
-  const send = async (ticket: Pick<Ticket, 'number' | 'status'>, to: Status, res: string, cm: string) => {
-    const updated = await api.post<Ticket>(`/tickets/${ticket.number}/status`, { status: to, result: res, comment: cm })
+  const send = async (ticket: Pick<Ticket, 'number' | 'status'>, to: Status, res: string, cm: string, loss = '') => {
+    const updated = await api.post<Ticket>(`/tickets/${ticket.number}/status`, { status: to, result: res, comment: cm, loss_reason: loss })
     qc.setQueryData(['ticket', ticket.number], updated)
     void qc.invalidateQueries({ queryKey: ['tickets'] })
     void qc.invalidateQueries({ queryKey: ['board'] })
@@ -59,6 +60,7 @@ export function useStatusChange(): {
       const p = { ticket, to, needResult, needComment, resolve }
       pendingRef.current = p
       setResult('')
+      setLossReason('')
       setComment('')
       setError('')
       setPending(p)
@@ -77,7 +79,7 @@ export function useStatusChange(): {
     setBusy(true)
     setError('')
     try {
-      const updated = await send(pending.ticket, pending.to, result, comment)
+      const updated = await send(pending.ticket, pending.to, result, comment, result === 'lost' ? lossReason : '')
       close(updated)
     } catch (err) {
       setError(errorMessage(err))
@@ -85,7 +87,7 @@ export function useStatusChange(): {
     }
   }
 
-  const valid = (!pending?.needResult || result !== '') && (!pending?.needComment || comment.trim().length >= 3)
+  const valid = (result !== 'lost' || lossReason !== '') && (!pending?.needResult || result !== '') && (!pending?.needComment || comment.trim().length >= 3)
 
   const dialog = (
     <Modal
@@ -132,6 +134,12 @@ export function useStatusChange(): {
             </div>
           </div>
         )}
+        {result === 'lost' && <Field label={t.shortlist.lossReason} htmlFor="status-loss" hint={t.shortlist.lossHint}>
+          <Select id="status-loss" required value={lossReason} onChange={(e) => setLossReason(e.target.value)}>
+            <option value="">{t.shortlist.unknown}</option>
+            {Object.entries(t.lossReasons).filter(([key]) => key !== 'unknown').map(([key, label]) => <option key={key} value={key}>{label}</option>)}
+          </Select>
+        </Field>}
         {pending?.needComment && <p className="text-sm text-muted">{t.ticket.backText}</p>}
         {(pending?.needComment || pending?.needResult) && (
           <Field label={pending?.needComment ? t.ticket.commentLabel : t.ticket.commentOptional} htmlFor="status-comment">

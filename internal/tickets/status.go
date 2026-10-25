@@ -17,11 +17,12 @@ import (
 // ChangeStatus moves a ticket to another status according to the workflow
 // matrix. Closing requires a result; moving back requires a comment.
 func (s *Service) ChangeStatus(ctx context.Context, actor workflow.Actor, ref string, to workflow.Status,
-	comment string, result workflow.CloseResult) (*Ticket, error) {
+	comment string, result workflow.CloseResult, lossReason string) (*Ticket, error) {
 	if err := actor.Require(workflow.PermView); err != nil {
 		return nil, err
 	}
 	comment = strings.TrimSpace(comment)
+	lossReason = strings.TrimSpace(lossReason)
 	var ticket *Ticket
 	err := db.InTx(ctx, s.pool, func(tx pgx.Tx) error {
 		id, err := s.ResolveID(ctx, tx, ref)
@@ -42,23 +43,29 @@ func (s *Service) ChangeStatus(ctx context.Context, actor workflow.Actor, ref st
 		if err := workflow.ValidateTransition(actor.Role, from, to, comment, result); err != nil {
 			return err
 		}
+		if err := workflow.ValidateLossReason(result, lossReason); err != nil {
+			return err
+		}
 		var closedAt *time.Time
 		if to == workflow.StatusClosed {
 			now := time.Now().UTC()
 			closedAt = &now
 		}
-		if _, err := tx.Exec(ctx, `UPDATE tickets SET status = $2, close_result = $3, closed_at = $4, updated_at = now()
-			WHERE id = $1`, id, string(to), string(result), closedAt); err != nil {
+		if _, err := tx.Exec(ctx, `UPDATE tickets SET status = $2, close_result = $3, closed_at = $4, loss_reason = $5, updated_at = now()
+			WHERE id = $1`, id, string(to), string(result), closedAt, lossReason); err != nil {
 			return err
 		}
 		if _, err := tx.Exec(ctx, `
-			INSERT INTO ticket_status_history (ticket_id, from_status, to_status, close_result, changed_by, comment, via)
-			VALUES ($1, $2, $3, $4, $5, $6, $7)`,
-			id, string(from), string(to), string(result), actor.UserID, comment, string(actor.Via)); err != nil {
+			INSERT INTO ticket_status_history (ticket_id, from_status, to_status, close_result, changed_by, comment, via, loss_reason)
+			VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
+			id, string(from), string(to), string(result), actor.UserID, comment, string(actor.Via), lossReason); err != nil {
 			return err
 		}
 		details := map[string]any{
 			"ticket_id": id, "number": number, "title": title, "from": from, "to": to,
+		}
+		if lossReason != "" {
+			details["loss_reason"] = lossReason
 		}
 		if result != "" {
 			details["result"] = result
@@ -106,6 +113,7 @@ func (s *Service) ChangeStatus(ctx context.Context, actor workflow.Actor, ref st
 
 // StatusChange is a row of the status history.
 type StatusChange struct {
+	LossReason  string    `json:"loss_reason"`
 	ID          string    `json:"id"`
 	FromStatus  *string   `json:"from_status"`
 	ToStatus    string    `json:"to_status"`
@@ -120,7 +128,7 @@ type StatusChange struct {
 // StatusHistory returns the status changes of a ticket, oldest first.
 func (s *Service) StatusHistory(ctx context.Context, ticketID string) ([]StatusChange, error) {
 	rows, err := s.pool.Query(ctx, `
-		SELECT h.id, h.from_status, h.to_status, h.close_result, h.changed_by, u.full_name, h.comment, h.via, h.created_at
+		SELECT h.id, h.from_status, h.to_status, h.close_result, h.changed_by, u.full_name, h.comment, h.via, h.created_at, h.loss_reason
 		FROM ticket_status_history h JOIN users u ON u.id = h.changed_by
 		WHERE h.ticket_id = $1 ORDER BY h.created_at`, ticketID)
 	if err != nil {
@@ -131,7 +139,7 @@ func (s *Service) StatusHistory(ctx context.Context, ticketID string) ([]StatusC
 	for rows.Next() {
 		var c StatusChange
 		if err := rows.Scan(&c.ID, &c.FromStatus, &c.ToStatus, &c.CloseResult, &c.ChangedBy, &c.ChangedName,
-			&c.Comment, &c.Via, &c.CreatedAt); err != nil {
+			&c.Comment, &c.Via, &c.CreatedAt, &c.LossReason); err != nil {
 			return nil, err
 		}
 		out = append(out, c)

@@ -51,6 +51,10 @@ Workflow statuses (strict order): new → analysis → solution → sent → clo
 
 A task has a title, priority, source link, deadline, an assignee (a specific person, or nobody = the whole team, shown as "Everyone"), an optional description, a technical solution, comments and files. Tasks can be referenced by UUID or by number like T-2026-0001. Times are returned in the portal time zone with an explicit offset. Write comments and documents in the language the user writes in (the team works mostly in English). Deleting is not possible through MCP.
 
+Use structured shortlist fields (fit_score and complexity: integers 1 to 5; market; applications_count; budget_amount as a decimal string; currency; customer) instead of burying them in descriptions. Leave unknown values unset; zero applications means a confirmed zero. To clear a nullable field with update_ticket, use clear_fields. Before importing, list_tickets with source_url to find an existing task. A duplicate_source_url error identifies the existing task: read it and update only fields supported by new evidence; never retry with an altered URL to bypass deduplication.
+
+Sent tasks have already been submitted and are never overdue. Closing as lost requires loss_reason: price, competitor, no_response or requirements. Determine it from the user's statement or explicit evidence in the task/comments/documents. If the reason is unknown or ambiguous, ask the user before closing; no_response is an actual lack of response, not a substitute for missing evidence. Preserve supporting evidence in the closure comment. get_overview returns lost_by_reason and list_tickets can filter by loss_reason.
+
 Typical flow for a tender: get_ticket → list_attachments → read_attachment for the technical specification ("tz" category) → analyse → save_technical_solution and/or add_comment. Use the analyze_tender prompt for a structured tender analysis.`
 
 // NewHandler builds the authenticated MCP HTTP handler for /mcp.
@@ -205,6 +209,8 @@ func (s *server) ticketURL(number string) string { return s.Cfg.BaseURL + "/tick
 
 // ticketSummary is the compact task representation returned to the model.
 type ticketSummary struct {
+	tickets.Shortlist
+	LossReason  string  `json:"loss_reason,omitempty"`
 	ID          string  `json:"id"`
 	Number      string  `json:"number"`
 	Title       string  `json:"title"`
@@ -225,6 +231,7 @@ func (s *server) summary(t *tickets.Ticket) ticketSummary {
 		assignee = *t.AssigneeName
 	}
 	return ticketSummary{
+		Shortlist: t.Shortlist, LossReason: t.LossReason,
 		ID: t.ID, Number: t.Number, Title: t.Title, Status: string(t.Status), CloseResult: t.CloseResult,
 		Priority: t.Priority, Assignee: assignee, AssigneeID: t.AssigneeID, Deadline: s.fmtTime(t.Deadline),
 		SourceURL: t.SourceURL, UpdatedAt: *s.fmtTime(&t.UpdatedAt), URL: s.ticketURL(t.Number),

@@ -1,3 +1,5 @@
+import { ShortlistSummary } from '../../components/Shortlist'
+import { submissionPending } from '../../lib/shortlist'
 import { useState, type ReactNode } from 'react'
 import { Link, useNavigate, useParams, useSearchParams } from 'react-router'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
@@ -49,6 +51,8 @@ export function TicketPage() {
       qc.setQueryData(['ticket', ref], tk)
       void qc.invalidateQueries({ queryKey: ['history', ref] })
       void qc.invalidateQueries({ queryKey: ['tickets'] })
+      void qc.invalidateQueries({ queryKey: ['board'] })
+      void qc.invalidateQueries({ queryKey: ['dashboard'] })
       setEditing(false)
       toast(t.ticket.updated)
     },
@@ -58,6 +62,7 @@ export function TicketPage() {
     mutationFn: () => api.del(`/tickets/${ref}`),
     onSuccess: () => {
       void qc.invalidateQueries({ queryKey: ['tickets'] })
+      void qc.invalidateQueries({ queryKey: ['board'] })
       void qc.invalidateQueries({ queryKey: ['dashboard'] })
       toast(t.ticket.deleted)
       navigate('/tickets')
@@ -156,9 +161,11 @@ export function TicketPage() {
           <Card className="p-5">
             <div className="mb-3 border-b border-line pb-4">
               <p className="mb-1 text-[12px] text-muted">{t.ticket.deadline}</p>
-              <DeadlineBadge deadline={tk.deadline} closed={tk.status === 'closed'} size="lg" />
+              <DeadlineBadge deadline={tk.deadline} closed={!submissionPending(tk.status)} size="lg" />
             </div>
+            <div className="mb-3 border-b border-line pb-4"><ShortlistSummary ticket={tk} full /></div>
             <dl className="divide-y divide-line">
+              {tk.close_result === 'lost' && <Row label={t.shortlist.lossReason}>{t.lossReasons[tk.loss_reason || 'unknown']}</Row>}
               <Row label={t.ticket.assignee}>
                 {tk.assignee_name ?? <span className="font-medium text-accent">{t.common.everyone}</span>}
               </Row>
@@ -193,6 +200,7 @@ export function TicketPage() {
 
       <Modal open={editing} onClose={() => setEditing(false)} title={`${t.ticket.editTitle} ${tk.number}`} wide>
         <TicketForm
+          ticketId={tk.id}
           initial={valuesFromTicket(tk)}
           submitLabel={t.common.save}
           busy={update.isPending}

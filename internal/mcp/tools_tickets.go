@@ -21,13 +21,14 @@ var (
 type noInput struct{}
 
 type listTicketsInput struct {
+	tickets.ShortlistFilter
 	Status       []string `json:"status,omitempty" jsonschema:"Filter by one or more statuses"`
 	Priority     []string `json:"priority,omitempty" jsonschema:"Filter by priority"`
 	Assignee     string   `json:"assignee,omitempty" jsonschema:"Assignee: login, full name, user id, 'me' or 'everyone' (tasks for the whole team)"`
 	Mine         bool     `json:"mine,omitempty" jsonschema:"Only tasks of the current user plus tasks for everyone"`
 	DeadlineFrom string   `json:"deadline_from,omitempty" jsonschema:"Deadline on or after this date (YYYY-MM-DD, portal time zone)"`
 	DeadlineTo   string   `json:"deadline_to,omitempty" jsonschema:"Deadline on or before this date (YYYY-MM-DD, portal time zone)"`
-	Overdue      bool     `json:"overdue,omitempty" jsonschema:"Only open tasks whose deadline has passed"`
+	Overdue      bool     `json:"overdue,omitempty" jsonschema:"Only overdue tasks; sent and closed are excluded"`
 	Query        string   `json:"query,omitempty" jsonschema:"Free-text search in number, title and description"`
 	Sort         string   `json:"sort,omitempty" jsonschema:"Sort field (default created_at)"`
 	Order        string   `json:"order,omitempty" jsonschema:"Sort order (default desc)"`
@@ -40,6 +41,7 @@ type ticketRef struct {
 }
 
 type createTicketInput struct {
+	shortlistInput
 	Title       string `json:"title" jsonschema:"Short title"`
 	Priority    string `json:"priority,omitempty" jsonschema:"Priority, default normal"`
 	SourceURL   string `json:"source_url,omitempty" jsonschema:"Link to the tender or request (http/https)"`
@@ -49,20 +51,23 @@ type createTicketInput struct {
 }
 
 type updateTicketInput struct {
-	TicketID    string  `json:"ticket_id" jsonschema:"Task UUID or number like T-2026-0001"`
-	Title       *string `json:"title,omitempty" jsonschema:"New title"`
-	Priority    *string `json:"priority,omitempty" jsonschema:"Priority"`
-	SourceURL   *string `json:"source_url,omitempty" jsonschema:"Source link; empty string clears it"`
-	Deadline    *string `json:"deadline,omitempty" jsonschema:"Deadline (same formats as create_ticket); empty string clears it"`
-	Assignee    *string `json:"assignee,omitempty" jsonschema:"Assignee: login, full name or 'me'; 'everyone' assigns the task to the whole team"`
-	Description *string `json:"description,omitempty" jsonschema:"New description (Markdown), replaces the old one"`
+	shortlistInput
+	ClearFields []string `json:"clear_fields,omitempty" jsonschema:"Clear nullable shortlist fields: fit_score, complexity, applications_count, budget_amount. Do not also provide a value for a cleared field."`
+	TicketID    string   `json:"ticket_id" jsonschema:"Task UUID or number like T-2026-0001"`
+	Title       *string  `json:"title,omitempty" jsonschema:"New title"`
+	Priority    *string  `json:"priority,omitempty" jsonschema:"Priority"`
+	SourceURL   *string  `json:"source_url,omitempty" jsonschema:"Source link; empty string clears it"`
+	Deadline    *string  `json:"deadline,omitempty" jsonschema:"Deadline (same formats as create_ticket); empty string clears it"`
+	Assignee    *string  `json:"assignee,omitempty" jsonschema:"Assignee: login, full name or 'me'; 'everyone' assigns the task to the whole team"`
+	Description *string  `json:"description,omitempty" jsonschema:"New description (Markdown), replaces the old one"`
 }
 
 type changeStatusInput struct {
-	TicketID string `json:"ticket_id" jsonschema:"Task UUID or number like T-2026-0001"`
-	Status   string `json:"status" jsonschema:"Target status"`
-	Result   string `json:"result,omitempty" jsonschema:"Required when status is closed"`
-	Comment  string `json:"comment,omitempty" jsonschema:"Required when moving a task back to an earlier status: explain why"`
+	LossReason string `json:"loss_reason,omitempty" jsonschema:"Required for result lost: price, competitor, no_response, requirements. Use evidence or ask the user; never invent a reason. Put supporting details in comment."`
+	TicketID   string `json:"ticket_id" jsonschema:"Task UUID or number like T-2026-0001"`
+	Status     string `json:"status" jsonschema:"Target status"`
+	Result     string `json:"result,omitempty" jsonschema:"Required when status is closed"`
+	Comment    string `json:"comment,omitempty" jsonschema:"Required when moving a task back to an earlier status: explain why"`
 }
 
 type saveSolutionInput struct {
@@ -85,10 +90,10 @@ func (s *server) registerTicketTools(srv *sdk.Server) {
 
 	sdk.AddTool(srv, &sdk.Tool{
 		Name:        "list_tickets",
-		Description: "List tasks with filters (status, priority, assignee, deadline range, overdue, free-text query). Returns 20 tasks by default, at most 100 per call; use offset to page.",
+		Description: "List tasks with filters including shortlist score/count ranges, market, customer, amount, loss_reason and canonical source_url. Amount bounds/sorting require currency. Returns 20 tasks by default, at most 100 per call; use offset to page.",
 		InputSchema: inputSchema[listTicketsInput](map[string][]string{
 			"status": statusEnum, "priority": priorityEnum,
-			"sort":  {"created_at", "updated_at", "deadline", "priority", "status", "title", "number"},
+			"sort":  {"created_at", "updated_at", "deadline", "priority", "status", "title", "number", "fit_score", "complexity", "market", "applications_count", "budget_amount", "currency", "customer"},
 			"order": {"asc", "desc"},
 		}),
 		Annotations: readOnly("List tasks"),
@@ -117,8 +122,8 @@ func (s *server) registerTicketTools(srv *sdk.Server) {
 
 	sdk.AddTool(srv, &sdk.Tool{
 		Name:        "change_ticket_status",
-		Description: "Move a task to another status following the workflow (new → analysis → solution → sent → closed). Closing requires 'result'; moving back requires 'comment'. Permissions depend on the user's role.",
-		InputSchema: inputSchema[changeStatusInput](map[string][]string{"status": statusEnum, "result": resultEnum}),
+		Description: "Move a task to another status following the workflow (new → analysis → solution → sent → closed). Closing requires 'result', and 'loss_reason' when lost; moving back requires 'comment'. Permissions depend on the user's role.",
+		InputSchema: inputSchema[changeStatusInput](map[string][]string{"status": statusEnum, "result": resultEnum, "loss_reason": workflow.LossReasons}),
 		Annotations: writeAnn("Change task status", false, false),
 	}, s.changeStatus)
 
@@ -150,6 +155,7 @@ func (s *server) getOverview(ctx context.Context, req *sdk.CallToolRequest, _ no
 		"current_user":      map[string]string{"id": me.ID, "login": me.Username, "name": me.FullName, "role": string(me.Role)},
 		"counts_by_status":  o.Counts,
 		"closed_by_result":  o.ClosedByResult,
+		"lost_by_reason":    o.LostByReason,
 		"total":             o.Total,
 		"my_open_tickets":   s.summaries(o.MyTickets),
 		"deadlines_next_7d": s.summaries(o.UpcomingDeadlines),
@@ -175,7 +181,8 @@ func (s *server) listTickets(ctx context.Context, req *sdk.CallToolRequest, in l
 		in.Offset = 0
 	}
 	f := tickets.ListFilter{
-		Statuses: in.Status, Priorities: in.Priority, Overdue: in.Overdue, Q: in.Query, Sort: in.Sort, Order: in.Order,
+		ShortlistFilter: in.ShortlistFilter,
+		Statuses:        in.Status, Priorities: in.Priority, Overdue: in.Overdue, Q: in.Query, Sort: in.Sort, Order: in.Order,
 	}
 	if in.Mine {
 		f.MineUserID = me.ID
@@ -254,6 +261,7 @@ func (s *server) getTicket(ctx context.Context, req *sdk.CallToolRequest, in tic
 		}
 		if h.CloseResult != "" {
 			row["result"] = h.CloseResult
+			row["loss_reason"] = h.LossReason
 		}
 		sh = append(sh, row)
 	}
@@ -278,7 +286,7 @@ func (s *server) createTicket(ctx context.Context, req *sdk.CallToolRequest, in 
 	if err != nil {
 		return nil, nil, err
 	}
-	ci := tickets.CreateInput{Title: in.Title, Description: in.Description, SourceURL: in.SourceURL, Priority: in.Priority}
+	ci := tickets.CreateInput{Shortlist: in.shortlistInput.values(), Title: in.Title, Description: in.Description, SourceURL: in.SourceURL, Priority: in.Priority}
 	if in.Deadline != "" {
 		ci.Deadline = &in.Deadline
 	}
@@ -303,7 +311,11 @@ func (s *server) updateTicket(ctx context.Context, req *sdk.CallToolRequest, in 
 	if err != nil {
 		return nil, nil, err
 	}
-	ui := tickets.UpdateInput{Title: in.Title, Description: in.Description, SourceURL: in.SourceURL,
+	patch, err := in.shortlistInput.patch(in.ClearFields)
+	if err != nil {
+		return nil, nil, s.toolError("update_ticket", err)
+	}
+	ui := tickets.UpdateInput{ShortlistPatch: patch, Title: in.Title, Description: in.Description, SourceURL: in.SourceURL,
 		Deadline: in.Deadline, Priority: in.Priority}
 	if in.Assignee != nil {
 		id, err := s.resolveUser(ctx, me, strings.TrimSpace(*in.Assignee))
@@ -327,7 +339,7 @@ func (s *server) changeStatus(ctx context.Context, req *sdk.CallToolRequest, in 
 	if err != nil {
 		return nil, nil, err
 	}
-	t, err := s.Tickets.ChangeStatus(ctx, actor, in.TicketID, workflow.Status(in.Status), in.Comment, workflow.CloseResult(in.Result))
+	t, err := s.Tickets.ChangeStatus(ctx, actor, in.TicketID, workflow.Status(in.Status), in.Comment, workflow.CloseResult(in.Result), in.LossReason)
 	if err != nil {
 		return nil, nil, s.toolError("change_ticket_status", err)
 	}

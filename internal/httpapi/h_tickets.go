@@ -4,6 +4,8 @@ import (
 	"encoding/csv"
 	"fmt"
 	"net/http"
+	"onceplatform/internal/apperr"
+	"strconv"
 	"strings"
 	"time"
 
@@ -20,6 +22,7 @@ func (a *api) ticketRoutes(r chi.Router) {
 	r.Get("/tickets", a.listTickets)
 	r.Get("/tickets/export.csv", a.exportTickets)
 	r.Get("/tickets/board", a.board)
+	r.Get("/tickets/source-check", a.checkSource)
 	r.Post("/tickets", a.createTicket)
 	r.Get("/tickets/{ref}", a.getTicket)
 	r.Patch("/tickets/{ref}", a.updateTicket)
@@ -81,7 +84,30 @@ func (a *api) listFilter(r *http.Request) (tickets.ListFilter, error) {
 	if f.DeadlineTo, err = tickets.ParseDateBound(q.Get("deadline_to"), loc, true); err != nil {
 		return f, err
 	}
-	return f, nil
+	for _, field := range []struct {
+		name string
+		dst  **int
+	}{
+		{"fit_min", &f.FitMin}, {"fit_max", &f.FitMax}, {"complexity_min", &f.ComplexityMin}, {"complexity_max", &f.ComplexityMax},
+		{"applications_min", &f.ApplicationsMin}, {"applications_max", &f.ApplicationsMax},
+	} {
+		if raw := q.Get(field.name); raw != "" {
+			n, err := strconv.Atoi(raw)
+			if err != nil {
+				return f, apperr.Validation("Invalid integer: " + field.name)
+			}
+			*field.dst = &n
+		}
+	}
+	if v := q.Get("budget_min"); v != "" {
+		f.BudgetMin = &v
+	}
+	if v := q.Get("budget_max"); v != "" {
+		f.BudgetMax = &v
+	}
+	f.Market, f.Customer, f.Currency, f.SourceURL = q.Get("market"), q.Get("customer"), q.Get("currency"), q.Get("source_url")
+	f.LossReason = q.Get("loss_reason")
+	return f, f.Validate()
 }
 
 func (a *api) listTickets(w http.ResponseWriter, r *http.Request) {
@@ -139,7 +165,7 @@ func (a *api) exportTickets(w http.ResponseWriter, r *http.Request) {
 	cw := csv.NewWriter(w)
 	cw.Comma = ';'
 	_ = cw.Write([]string{"Number", "Title", "Status", "Result", "Priority", "Deadline", "Assignee", "Source link",
-		"Created by", "Created", "Updated", "Link"})
+		"Created by", "Created", "Updated", "Link", "Fit", "Complexity", "Market", "Applications", "Amount", "Currency", "Customer", "Loss reason"})
 	fmtTime := func(t *time.Time) string {
 		if t == nil {
 			return ""
@@ -159,6 +185,7 @@ func (a *api) exportTickets(w http.ResponseWriter, r *http.Request) {
 			t.Number, csvSafe(t.Title), workflow.StatusLabel(t.Status), result, csvPriorities[t.Priority],
 			fmtTime(t.Deadline), assignee, csvSafe(t.SourceURL), t.CreatedByName, fmtTime(&t.CreatedAt),
 			fmtTime(&t.UpdatedAt), a.cfg.BaseURL + "/tickets/" + t.Number,
+			csvInt(t.FitScore), csvInt(t.Complexity), csvSafe(t.Market), csvInt(t.ApplicationsCount), csvAmount(t.BudgetAmount), t.Currency, csvSafe(t.Customer), t.LossReason,
 		})
 	}
 	cw.Flush()
@@ -228,16 +255,17 @@ func (a *api) deleteTicket(w http.ResponseWriter, r *http.Request) {
 
 func (a *api) changeStatus(w http.ResponseWriter, r *http.Request) {
 	var in struct {
-		Status  string `json:"status"`
-		Comment string `json:"comment"`
-		Result  string `json:"result"`
+		Status     string `json:"status"`
+		Comment    string `json:"comment"`
+		Result     string `json:"result"`
+		LossReason string `json:"loss_reason"`
 	}
 	if err := decode(w, r, &in); err != nil {
 		a.writeError(w, r, err)
 		return
 	}
 	t, err := a.tickets.ChangeStatus(r.Context(), actor(r), chi.URLParam(r, "ref"),
-		workflow.Status(in.Status), in.Comment, workflow.CloseResult(in.Result))
+		workflow.Status(in.Status), in.Comment, workflow.CloseResult(in.Result), in.LossReason)
 	if err != nil {
 		a.writeError(w, r, err)
 		return
@@ -347,4 +375,25 @@ func (a *api) deleteComment(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
+}
+
+func csvInt(v *int) string {
+	if v == nil {
+		return ""
+	}
+	return strconv.Itoa(*v)
+}
+func csvAmount(v *string) string {
+	if v == nil {
+		return ""
+	}
+	return *v
+}
+func (a *api) checkSource(w http.ResponseWriter, r *http.Request) {
+	existing, err := a.tickets.FindSource(r.Context(), r.URL.Query().Get("source_url"), r.URL.Query().Get("exclude_id"))
+	if err != nil {
+		a.writeError(w, r, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"duplicate": existing})
 }

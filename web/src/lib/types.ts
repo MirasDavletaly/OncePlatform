@@ -57,6 +57,14 @@ export interface Transition {
 }
 
 export interface Ticket {
+  fit_score: number | null
+  complexity: number | null
+  market: string
+  applications_count: number | null
+  budget_amount: string | null
+  currency: string
+  customer: string
+  loss_reason: string
   id: string
   number: string
   title: string
@@ -100,6 +108,7 @@ export interface AuditRecord {
 }
 
 export interface Overview {
+  lost_by_reason: Record<string, number>
   counts: Record<string, number>
   closed_by_result: Record<string, number>
   total: number
@@ -110,6 +119,7 @@ export interface Overview {
 }
 
 export interface StatusChange {
+  loss_reason: string
   id: string
   from_status: string | null
   to_status: string

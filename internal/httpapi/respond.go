@@ -19,8 +19,9 @@ type errorBody struct {
 }
 
 type errorDetail struct {
-	Code    string `json:"code"`
-	Message string `json:"message"`
+	Code    string         `json:"code"`
+	Message string         `json:"message"`
+	Details map[string]any `json:"details,omitempty"`
 }
 
 func writeJSON(w http.ResponseWriter, status int, v any) {
@@ -44,7 +45,7 @@ func (a *api) writeError(w http.ResponseWriter, r *http.Request, err error) {
 		if e.Code == "rate_limited" {
 			w.Header().Set("Retry-After", "60")
 		}
-		writeErrorCode(w, e.Status, e.Code, e.Message)
+		writeJSON(w, e.Status, errorBody{Error: errorDetail{Code: e.Code, Message: e.Message, Details: e.Details}})
 		return
 	}
 	var mbe *http.MaxBytesError

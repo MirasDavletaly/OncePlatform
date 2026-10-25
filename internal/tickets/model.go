@@ -22,6 +22,8 @@ var Priorities = []string{"low", "normal", "high", "urgent"}
 // Ticket is a task with joined display fields. A task without an assignee
 // belongs to everyone on the team.
 type Ticket struct {
+	LossReason string `json:"loss_reason"`
+	Shortlist
 	ID                string          `json:"id"`
 	Number            string          `json:"number"`
 	Title             string          `json:"title"`
@@ -46,6 +48,7 @@ type Ticket struct {
 // CreateInput holds fields for a new task. A nil or empty AssigneeID means
 // the task is for everyone.
 type CreateInput struct {
+	Shortlist
 	Title       string  `json:"title"`
 	Description string  `json:"description"`
 	SourceURL   string  `json:"source_url"`
@@ -57,6 +60,7 @@ type CreateInput struct {
 // UpdateInput holds fields to change; nil means "leave unchanged". An empty
 // string clears the deadline, or assigns the task to everyone (assignee_id).
 type UpdateInput struct {
+	ShortlistPatch
 	Title       *string `json:"title"`
 	Description *string `json:"description"`
 	SourceURL   *string `json:"source_url"`
@@ -68,7 +72,7 @@ type UpdateInput struct {
 // IsEmpty reports whether no field is set.
 func (u UpdateInput) IsEmpty() bool {
 	return u.Title == nil && u.Description == nil && u.SourceURL == nil && u.Deadline == nil &&
-		u.Priority == nil && u.AssigneeID == nil
+		u.Priority == nil && u.AssigneeID == nil && u.ShortlistPatch.empty()
 }
 
 const (

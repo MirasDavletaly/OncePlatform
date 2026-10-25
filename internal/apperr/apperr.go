@@ -14,7 +14,8 @@ type Error struct {
 	Status  int
 	Code    string
 	Message string
-	Err     error // optional wrapped cause, never shown to users
+	Details map[string]any // explicitly safe, structured client information
+	Err     error          // optional wrapped cause, never shown to users
 }
 
 func (e *Error) Error() string {

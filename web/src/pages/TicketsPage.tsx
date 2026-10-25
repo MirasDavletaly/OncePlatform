@@ -1,3 +1,8 @@
+import { calendarWeek } from '../lib/shortlist'
+import { dayKey } from '../lib/format'
+import { ShortlistFilters, SHORTLIST_FILTERS } from '../components/ShortlistFilters'
+import { ShortlistSummary, SHORTLIST_COLUMNS, shortlistDisplay } from '../components/Shortlist'
+import { submissionPending } from '../lib/shortlist'
 import { useState, type ReactNode } from 'react'
 import { Link, useNavigate, useSearchParams } from 'react-router'
 import { keepPreviousData, useQuery } from '@tanstack/react-query'
@@ -12,7 +17,7 @@ import { useUsers } from '../components/inputs'
 import { Button, Card, EmptyState, ErrorState, Input, Loading, PageHeader, Pagination, buttonClass } from '../components/ui'
 
 const MULTI = ['status', 'priority', 'assignee_id'] as const
-const SINGLE = ['q', 'mine', 'deadline_from', 'deadline_to', 'overdue', 'sort', 'order', 'page'] as const
+const SINGLE = ['q', 'mine', 'deadline_from', 'deadline_to', 'overdue', 'sort', 'order', 'page', ...SHORTLIST_FILTERS] as const
 
 function Chips({
   label,
@@ -56,7 +61,7 @@ export function TicketsPage() {
   const navigate = useNavigate()
   const [params, setParams] = useSearchParams()
   const [q, setQ] = useState(params.get('q') ?? '')
-  const [showFilters, setShowFilters] = useState(() => MULTI.some((k) => params.getAll(k).length) || !!params.get('deadline_from'))
+  const [showFilters, setShowFilters] = useState(() => MULTI.some((k) => params.getAll(k).length) || SINGLE.some((k) => !!params.get(k)))
   const { data: users = [] } = useUsers()
 
   const apiQuery = new URLSearchParams()
@@ -93,6 +98,7 @@ export function TicketsPage() {
       const cur = p.get('sort')
       const order = p.get('order') ?? 'desc'
       p.set('sort', col)
+      if (col === 'budget_amount' && !p.get('currency')) { p.set('currency', 'KZT'); setShowFilters(true) }
       p.set('order', cur === col && order === 'desc' ? 'asc' : 'desc')
     })
   const hasFilters =
@@ -106,7 +112,7 @@ export function TicketsPage() {
     const active = params.get('sort') === col
     const order = params.get('order') ?? 'desc'
     return (
-      <th className={cn('px-3 py-2.5 text-left font-medium', className)} aria-sort={active ? (order === 'asc' ? 'ascending' : 'descending') : 'none'}>
+      <th key={col} className={cn('px-3 py-2.5 text-left font-medium', className)} aria-sort={active ? (order === 'asc' ? 'ascending' : 'descending') : 'none'}>
         <button type="button" onClick={() => sortBy(col)} className="inline-flex items-center gap-1 hover:text-ink">
           {label}
           {active && (order === 'asc' ? <ArrowUp className="size-3" /> : <ArrowDown className="size-3" />)}
@@ -212,7 +218,14 @@ export function TicketsPage() {
                 onChange={(e) => setSingle('deadline_to', e.target.value)}
               />
             </div>
+            <Button size="sm" onClick={() => update((p) => {
+              const [from, to] = calendarWeek(dayKey(new Date()))
+              p.set('deadline_from', from); p.set('deadline_to', to)
+            })}>{t.shortlist.thisWeek}</Button>
           </div>
+          <ShortlistFilters key={params.toString()} params={params} apply={(values) => update((p) => {
+            for (const key of SHORTLIST_FILTERS) { const value = values[key]?.trim(); if (value) p.set(key, value); else p.delete(key) }
+          })} />
         </Card>
       )}
 
@@ -242,6 +255,7 @@ export function TicketsPage() {
                   <tr>
                     {th('number', t.tickets.col.number, 'w-28')}
                     {th('title', t.tickets.col.title)}
+                    {SHORTLIST_COLUMNS.map((key) => th(key, t.shortlist[key]))}
                     {th('status', t.tickets.col.status)}
                     {th('deadline', t.tickets.col.deadline)}
                     {th('priority', t.tickets.col.priority, 'hidden lg:table-cell')}
@@ -264,11 +278,14 @@ export function TicketsPage() {
                           {tk.title}
                         </Link>
                       </td>
+                      {SHORTLIST_COLUMNS.map((key) => <td key={key} className="max-w-48 px-3 py-3 text-[13px]">
+                        <span className={key === 'budget_amount' ? 'whitespace-nowrap' : 'line-clamp-2'}>{shortlistDisplay(tk, key)}</span>
+                      </td>)}
                       <td className="px-3 py-3">
                         <StatusBadge status={tk.status} result={tk.close_result} />
                       </td>
                       <td className="px-3 py-3">
-                        <DeadlineBadge deadline={tk.deadline} closed={tk.status === 'closed'} />
+                        <DeadlineBadge deadline={tk.deadline} closed={!submissionPending(tk.status)} />
                       </td>
                       <td className="hidden px-3 py-3 lg:table-cell">
                         <PriorityBadge priority={tk.priority} />
@@ -291,8 +308,9 @@ export function TicketsPage() {
                       <StatusBadge status={tk.status} result={tk.close_result} />
                     </div>
                     <p className="mt-1 font-medium">{tk.title}</p>
+                    <ShortlistSummary ticket={tk} />
                     <div className="mt-1.5 flex flex-wrap items-center gap-x-3 gap-y-1">
-                      <DeadlineBadge deadline={tk.deadline} closed={tk.status === 'closed'} />
+                      <DeadlineBadge deadline={tk.deadline} closed={!submissionPending(tk.status)} />
                       <PriorityBadge priority={tk.priority} compact />
                       <span className="text-[12px] text-muted">{assigneeLabel(tk)}</span>
                     </div>

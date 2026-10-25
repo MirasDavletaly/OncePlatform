@@ -39,7 +39,8 @@ const ticketSelect = `
 	       t.closed_at, t.assignee_id, a.full_name, t.created_by, cb.full_name, %s,
 	       (SELECT count(*) FROM comments cm WHERE cm.ticket_id = t.id AND cm.deleted_at IS NULL),
 	       (SELECT count(*) FROM attachments at WHERE at.ticket_id = t.id AND at.deleted_at IS NULL),
-	       t.created_at, t.updated_at
+	       t.created_at, t.updated_at, t.fit_score, t.complexity, t.market,
+	       t.applications_count, t.budget_amount::text, t.currency, t.customer, t.loss_reason
 	FROM tickets t
 	LEFT JOIN users a ON a.id = t.assignee_id
 	JOIN users cb ON cb.id = t.created_by`
@@ -53,7 +54,8 @@ func scanTicket(row pgx.Row) (*Ticket, error) {
 	var t Ticket
 	err := row.Scan(&t.ID, &t.Number, &t.Title, &t.Description, &t.SourceURL, &t.Deadline, &t.Priority,
 		&t.Status, &t.CloseResult, &t.ClosedAt, &t.AssigneeID, &t.AssigneeName, &t.CreatedBy, &t.CreatedByName,
-		&t.TechnicalSolution, &t.CommentsCount, &t.AttachmentsCount, &t.CreatedAt, &t.UpdatedAt)
+		&t.TechnicalSolution, &t.CommentsCount, &t.AttachmentsCount, &t.CreatedAt, &t.UpdatedAt,
+		&t.FitScore, &t.Complexity, &t.Market, &t.ApplicationsCount, &t.BudgetAmount, &t.Currency, &t.Customer, &t.LossReason)
 	if err != nil {
 		return nil, err
 	}
@@ -114,6 +116,7 @@ func (s *Service) getByID(ctx context.Context, q db.Querier, id string) (*Ticket
 
 // ListFilter selects tasks for the list, export, board and MCP.
 type ListFilter struct {
+	ShortlistFilter
 	Statuses   []string
 	Priorities []string
 	// AssigneeIDs selects tasks of specific users; "everyone" selects tasks
@@ -132,14 +135,21 @@ type ListFilter struct {
 }
 
 var sortColumns = map[string]string{
-	"number":     "t.created_at",
-	"title":      "lower(t.title)",
-	"deadline":   "t.deadline",
-	"priority":   "array_position(ARRAY['low','normal','high','urgent'], t.priority)",
-	"status":     "array_position(ARRAY['new','analysis','solution','sent','closed'], t.status)",
-	"created_at": "t.created_at",
-	"updated_at": "t.updated_at",
-	"assignee":   "lower(a.full_name)",
+	"fit_score":          "t.fit_score",
+	"complexity":         "t.complexity",
+	"market":             "NULLIF(lower(t.market), '')",
+	"applications_count": "t.applications_count",
+	"budget_amount":      "t.budget_amount",
+	"currency":           "t.currency",
+	"customer":           "NULLIF(lower(t.customer), '')",
+	"number":             "t.created_at",
+	"title":              "lower(t.title)",
+	"deadline":           "t.deadline",
+	"priority":           "array_position(ARRAY['low','normal','high','urgent'], t.priority)",
+	"status":             "array_position(ARRAY['new','analysis','solution','sent','closed'], t.status)",
+	"created_at":         "t.created_at",
+	"updated_at":         "t.updated_at",
+	"assignee":           "lower(a.full_name)",
 }
 
 func (f *ListFilter) where() (string, []any) {
@@ -187,7 +197,7 @@ func (f *ListFilter) where() (string, []any) {
 		conds = append(conds, "t.deadline < "+arg(*f.DeadlineTo))
 	}
 	if f.Overdue {
-		conds = append(conds, "t.deadline < now() AND t.status <> 'closed'")
+		conds = append(conds, "t.deadline < now() AND t.status NOT IN ('sent', 'closed')")
 	}
 	if q := strings.TrimSpace(f.Q); q != "" {
 		like := arg(db.LikePattern(q))
@@ -201,6 +211,39 @@ func (f *ListFilter) where() (string, []any) {
 		}
 		conds = append(conds, "("+strings.Join(parts, " OR ")+")")
 	}
+	for _, bound := range []struct {
+		column, op string
+		value      *int
+	}{
+		{"fit_score", ">=", f.FitMin}, {"fit_score", "<=", f.FitMax},
+		{"complexity", ">=", f.ComplexityMin}, {"complexity", "<=", f.ComplexityMax},
+		{"applications_count", ">=", f.ApplicationsMin}, {"applications_count", "<=", f.ApplicationsMax},
+	} {
+		if bound.value != nil {
+			conds = append(conds, "t."+bound.column+" "+bound.op+" "+arg(*bound.value))
+		}
+	}
+	if f.BudgetMin != nil {
+		conds = append(conds, "t.budget_amount >= "+arg(*f.BudgetMin)+"::numeric")
+	}
+	if f.BudgetMax != nil {
+		conds = append(conds, "t.budget_amount <= "+arg(*f.BudgetMax)+"::numeric")
+	}
+	if f.LossReason != "" {
+		conds = append(conds, "t.close_result = 'lost' AND t.loss_reason = "+arg(f.LossReason))
+	}
+	if f.Currency != "" {
+		conds = append(conds, "t.currency = "+arg(f.Currency))
+	}
+	if f.Market != "" {
+		conds = append(conds, "t.market ILIKE "+arg(db.LikePattern(f.Market)))
+	}
+	if f.Customer != "" {
+		conds = append(conds, "t.customer ILIKE "+arg(db.LikePattern(f.Customer)))
+	}
+	if f.SourceURL != "" {
+		conds = append(conds, "t.source_url_key <> '' AND t.source_url_key = ticket_source_key("+arg(f.SourceURL)+")")
+	}
 	return " WHERE " + strings.Join(conds, " AND "), args
 }
 
@@ -213,11 +256,14 @@ func (f *ListFilter) orderBy() string {
 	if strings.EqualFold(f.Order, "asc") {
 		dir = "ASC"
 	}
-	return fmt.Sprintf(" ORDER BY %s %s NULLS LAST, t.created_at DESC", col, dir)
+	return fmt.Sprintf(" ORDER BY %s %s NULLS LAST, t.created_at DESC, t.id DESC", col, dir)
 }
 
 // List returns a page of tasks (without long text fields) and the total.
 func (s *Service) List(ctx context.Context, f ListFilter) ([]Ticket, int, error) {
+	if err := f.Validate(); err != nil {
+		return nil, 0, err
+	}
 	if f.Page < 1 {
 		f.Page = 1
 	}
@@ -290,6 +336,9 @@ func (s *Service) Create(ctx context.Context, actor workflow.Actor, in CreateInp
 	if err := actor.Require(workflow.PermTicketCreate); err != nil {
 		return nil, err
 	}
+	if err := in.Shortlist.normalize(); err != nil {
+		return nil, err
+	}
 	title, err := normalizeTitle(in.Title)
 	if err != nil {
 		return nil, err
@@ -336,10 +385,12 @@ func (s *Service) Create(ctx context.Context, actor workflow.Actor, in CreateInp
 		number := FormatNumber(year, seq)
 		var id string
 		if err := tx.QueryRow(ctx, `
-			INSERT INTO tickets (number, title, description, source_url, deadline, priority, assignee_id, created_by)
-			VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+			INSERT INTO tickets (number, title, description, source_url, deadline, priority, assignee_id, created_by,
+			                     fit_score, complexity, market, applications_count, budget_amount, currency, customer)
+			VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13::text::numeric, $14, $15)
 			RETURNING id`,
-			number, title, in.Description, sourceURL, deadline, in.Priority, assignee, actor.UserID).Scan(&id); err != nil {
+			number, title, in.Description, sourceURL, deadline, in.Priority, assignee, actor.UserID,
+			in.FitScore, in.Complexity, in.Market, in.ApplicationsCount, in.BudgetAmount, in.Currency, in.Customer).Scan(&id); err != nil {
 			return err
 		}
 		if _, err := tx.Exec(ctx, `
@@ -348,7 +399,7 @@ func (s *Service) Create(ctx context.Context, actor workflow.Actor, in CreateInp
 			return err
 		}
 		if err := audit.Write(ctx, tx, audit.FromActor(actor, "ticket.create", "ticket", id, map[string]any{
-			"ticket_id": id, "number": number, "title": title,
+			"ticket_id": id, "number": number, "title": title, "shortlist": in.Shortlist,
 		})); err != nil {
 			return err
 		}
@@ -359,7 +410,7 @@ func (s *Service) Create(ctx context.Context, actor workflow.Actor, in CreateInp
 		return err
 	})
 	if err != nil {
-		return nil, err
+		return nil, s.sourceConflict(ctx, sourceURL, err)
 	}
 	return ticket, nil
 }
@@ -375,6 +426,7 @@ func (s *Service) Update(ctx context.Context, actor workflow.Actor, ref string, 
 		return nil, err
 	}
 	var ticket *Ticket
+	var attemptedSource string
 	err := db.InTx(ctx, s.pool, func(tx pgx.Tx) error {
 		id, err := s.ResolveID(ctx, tx, ref)
 		if err != nil {
@@ -393,6 +445,9 @@ func (s *Service) Update(ctx context.Context, actor workflow.Actor, ref string, 
 		}
 		next := *cur
 		changes := map[string]any{}
+		if err := in.ShortlistPatch.apply(&next.Shortlist, changes); err != nil {
+			return err
+		}
 
 		if in.Title != nil {
 			title, err := normalizeTitle(*in.Title)
@@ -417,6 +472,7 @@ func (s *Service) Update(ctx context.Context, actor workflow.Actor, ref string, 
 				return err
 			}
 			if v != cur.SourceURL {
+				attemptedSource = v
 				changes["source_url"] = change{cur.SourceURL, v}
 				next.SourceURL = v
 			}
@@ -459,9 +515,12 @@ func (s *Service) Update(ctx context.Context, actor workflow.Actor, ref string, 
 		}
 		if _, err := tx.Exec(ctx, `
 			UPDATE tickets SET title = $2, description = $3, source_url = $4, deadline = $5, priority = $6,
-			       assignee_id = $7, updated_at = now()
+			       assignee_id = $7, fit_score = $8, complexity = $9, market = $10,
+			       applications_count = $11, budget_amount = $12::text::numeric, currency = $13, customer = $14,
+			       updated_at = now()
 			WHERE id = $1`,
-			id, next.Title, next.Description, next.SourceURL, next.Deadline, next.Priority, next.AssigneeID); err != nil {
+			id, next.Title, next.Description, next.SourceURL, next.Deadline, next.Priority, next.AssigneeID,
+			next.FitScore, next.Complexity, next.Market, next.ApplicationsCount, next.BudgetAmount, next.Currency, next.Customer); err != nil {
 			return err
 		}
 		if err := audit.Write(ctx, tx, audit.FromActor(actor, "ticket.update", "ticket", id, map[string]any{
@@ -478,7 +537,7 @@ func (s *Service) Update(ctx context.Context, actor workflow.Actor, ref string, 
 		return err
 	})
 	if err != nil {
-		return nil, err
+		return nil, s.sourceConflict(ctx, attemptedSource, err)
 	}
 	return ticket, nil
 }

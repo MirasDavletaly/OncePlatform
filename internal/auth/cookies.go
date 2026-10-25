@@ -49,8 +49,6 @@ func FromTrustedProxy(r *http.Request) bool {
 	return false
 }
 
-// ClientIP returns the client address, honoring X-Forwarded-For / X-Real-IP
-// only when the request comes through a trusted proxy.
 func ClientIP(r *http.Request) string {
 	if FromTrustedProxy(r) {
 		if xff := r.Header.Get("X-Forwarded-For"); xff != "" {
@@ -69,9 +67,6 @@ func ClientIP(r *http.Request) string {
 	return r.RemoteAddr
 }
 
-// IsSecureRequest reports whether the browser reached the portal over HTTPS
-// (directly or via the TLS-terminating proxy). Cookies get the Secure flag
-// on HTTPS; plain-HTTP access by IP (first-time setup) still works.
 func IsSecureRequest(r *http.Request) bool {
 	if r.TLS != nil {
 		return true

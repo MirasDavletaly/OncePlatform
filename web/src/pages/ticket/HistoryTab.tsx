@@ -42,7 +42,7 @@ function describe(r: AuditRecord): { text: string; body?: ReactNode } {
         ? fmt(t.history.closed, { result: t.result[s(d.result)] ?? s(d.result) })
         : fmt(t.history.statusFrom, { from, to })
       return {
-        text,
+        text: text + (s(d.loss_reason) ? ' · ' + (t.lossReasons[s(d.loss_reason)] ?? s(d.loss_reason)) : ''),
         body: s(d.comment) ? (
           <p className="mt-1.5 rounded-lg bg-gold-soft/60 px-3 py-2 text-[13px]">
             <span className="font-medium text-gold">{t.history.reason}:</span> {s(d.comment)}
@@ -139,6 +139,7 @@ export function HistoryTab({ ticket }: { ticket: Ticket }) {
           {statuses.map((h) => (
             <li key={h.id} className="flex flex-col gap-1">
               <StatusBadge status={h.to_status} result={h.close_result} />
+              {h.loss_reason && <span className="text-[12px] text-muted">{t.shortlist.lossReason}: {t.lossReasons[h.loss_reason]}</span>}
               <span className="text-[12px] text-muted">
                 {h.changed_by_name}, <span className="num">{formatDateTime(h.created_at)}</span>
               </span>

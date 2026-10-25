@@ -1,3 +1,4 @@
+import { submissionPending } from '../lib/shortlist'
 import { Link } from 'react-router'
 import { useQuery } from '@tanstack/react-query'
 import { ArrowRight, Inbox } from 'lucide-react'
@@ -142,7 +143,7 @@ function TicketRow({ tk }: { tk: Ticket }) {
         </div>
         <div className="flex shrink-0 flex-col items-end gap-1">
           <StatusBadge status={tk.status} result={tk.close_result} />
-          <DeadlineBadge deadline={tk.deadline} closed={tk.status === 'closed'} />
+          <DeadlineBadge deadline={tk.deadline} closed={!submissionPending(tk.status)} />
         </div>
       </Link>
     </li>
@@ -162,6 +163,16 @@ export function DashboardPage() {
       <div className="flex flex-col gap-6">
         <DeadlineRibbon upcoming={o.upcoming_deadlines} overdue={o.overdue} />
         <PipelineRail o={o} />
+        {(o.closed_by_result.lost ?? 0) > 0 && <Card>
+          <CardHeader title={t.shortlist.lossTitle} />
+          <dl className="grid grid-cols-2 gap-4 px-5 pb-5 sm:grid-cols-5">
+            {Object.entries(t.lossReasons).map(([key, label]) => <div key={key}>
+              <dt className="text-[13px] text-muted">{label}</dt>
+              <dd className="font-display text-2xl">{key === 'unknown' ? (o.lost_by_reason[key] ?? 0) :
+                <Link className="hover:text-accent" to={'/tickets?loss_reason=' + key}>{o.lost_by_reason[key] ?? 0}</Link>}</dd>
+            </div>)}
+          </dl>
+        </Card>}
         <div className="grid gap-6 xl:grid-cols-[1.4fr_1fr]">
           <Card>
             <CardHeader

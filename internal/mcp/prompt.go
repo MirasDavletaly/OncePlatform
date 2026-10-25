@@ -2,6 +2,7 @@ package mcp
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"strings"
 
@@ -55,6 +56,11 @@ func (s *server) analyzeTender(ctx context.Context, req *sdk.GetPromptRequest) (
 	}
 	if t.SourceURL != "" {
 		fmt.Fprintf(&b, "- Source: %s\n", t.SourceURL)
+	}
+	shortlist, _ := json.Marshal(t.Shortlist)
+	fmt.Fprintf(&b, "- Structured shortlist (null means unknown): %s\n", shortlist)
+	if t.LossReason != "" {
+		fmt.Fprintf(&b, "- Recorded loss reason: %s\n", t.LossReason)
 	}
 	if desc := strings.TrimSpace(t.Description); desc != "" {
 		fmt.Fprintf(&b, "\n### Description\n%s\n", truncateRunes(desc, 6000))

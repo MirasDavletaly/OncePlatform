@@ -1,4 +1,5 @@
 .env
+local-data
 .git
 bin
 web/node_modules

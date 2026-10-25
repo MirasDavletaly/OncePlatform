@@ -215,7 +215,7 @@ func (s *Service) CheckDeadlines(ctx context.Context) (int, error) {
 	rows, err := s.pool.Query(ctx, `
 		SELECT id, number, title, deadline, assignee_id, created_by
 		FROM tickets
-		WHERE deleted_at IS NULL AND status <> 'closed'
+		WHERE deleted_at IS NULL AND status NOT IN ('sent', 'closed')
 		  AND deadline > now() AND deadline <= now() + interval '3 days'`)
 	if err != nil {
 		return 0, err
