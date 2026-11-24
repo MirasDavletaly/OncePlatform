@@ -27,6 +27,12 @@ const (
 	loginMaxAttempts = 5
 	loginWindow      = time.Minute
 	loginLockout     = 5 * time.Minute
+
+	// Per-login cap regardless of the client IP: the per-IP limiter alone
+	// allows 4 guesses a minute forever and nothing against rotating IPs.
+	userMaxAttempts = 20
+	userWindow      = time.Hour
+	userLockout     = time.Hour
 )
 
 // Languages supported by the interface.
@@ -44,6 +50,9 @@ type User struct {
 	LastLoginAt *time.Time    `json:"last_login_at"`
 	CreatedAt   time.Time     `json:"created_at"`
 	UpdatedAt   time.Time     `json:"updated_at"`
+	// a one-time code was issued and not used yet (InviteExpiresAt: until when it works)
+	InvitePending   bool       `json:"invite_pending"`
+	InviteExpiresAt *time.Time `json:"invite_expires_at,omitempty"`
 }
 
 // Actor returns the workflow actor for this user acting through via.
@@ -56,7 +65,8 @@ type Service struct {
 	pool         *pgxpool.Pool
 	log          *slog.Logger
 	CSRF         *CSRF
-	LoginLimiter *Limiter
+	LoginLimiter *Limiter // keyed by IP + login
+	UserLimiter  *Limiter // keyed by login only
 }
 
 // NewService creates the auth service.
@@ -66,15 +76,17 @@ func NewService(pool *pgxpool.Pool, log *slog.Logger, csrfSecret []byte) *Servic
 		log:          log,
 		CSRF:         NewCSRF(csrfSecret),
 		LoginLimiter: NewLimiter(loginMaxAttempts, loginWindow, loginLockout),
+		UserLimiter:  NewLimiter(userMaxAttempts, userWindow, userLockout),
 	}
 }
 
-const userColumns = `id, username, email, full_name, role, is_active, language, last_login_at, created_at, updated_at`
+const userColumns = `id, username, email, full_name, role, is_active, language, last_login_at, created_at, updated_at,
+	(invite_hash IS NOT NULL AND invite_expires_at > now()), invite_expires_at`
 
 func scanUser(row pgx.Row) (*User, error) {
 	var u User
 	if err := row.Scan(&u.ID, &u.Username, &u.Email, &u.FullName, &u.Role, &u.IsActive, &u.Language,
-		&u.LastLoginAt, &u.CreatedAt, &u.UpdatedAt); err != nil {
+		&u.LastLoginAt, &u.CreatedAt, &u.UpdatedAt, &u.InvitePending, &u.InviteExpiresAt); err != nil {
 		return nil, err
 	}
 	return &u, nil
@@ -161,6 +173,8 @@ type CreateUserInput struct {
 	FullName string        `json:"full_name"`
 	Role     workflow.Role `json:"role"`
 	Password string        `json:"password"`
+	// Invite: no password; the person gets a one-time code (IssueInvite) and sets their own
+	Invite bool `json:"invite"`
 }
 
 // CreateUser creates a user (admin only, or system bootstrap when actor is nil).
@@ -187,6 +201,11 @@ func (s *Service) CreateUser(ctx context.Context, actor *workflow.Actor, in Crea
 	}
 	if !in.Role.Valid() {
 		return nil, apperr.Validation("Unknown role")
+	}
+	if in.Invite { // a password nobody knows until the person sets theirs with the code
+		if in.Password, err = GeneratePassword(32); err != nil {
+			return nil, err
+		}
 	}
 	if err := ValidatePassword(in.Password); err != nil {
 		return nil, err
@@ -364,7 +383,9 @@ func (s *Service) ResetPassword(ctx context.Context, actor workflow.Actor, id, p
 		return "", err
 	}
 	err = db.InTx(ctx, s.pool, func(tx pgx.Tx) error {
-		if _, err := tx.Exec(ctx, `UPDATE users SET password_hash = $2, updated_at = now() WHERE id = $1`, id, hash); err != nil {
+		// a password set by the admin cancels a pending one-time code
+		if _, err := tx.Exec(ctx, `UPDATE users SET password_hash = $2, invite_hash = NULL, invite_expires_at = NULL, updated_at = now()
+			WHERE id = $1`, id, hash); err != nil {
 			return err
 		}
 		if _, err := tx.Exec(ctx, `DELETE FROM sessions WHERE user_id = $1`, id); err != nil {
@@ -438,6 +459,7 @@ func (s *Service) EnsureInitialUsers(ctx context.Context, users []config.Initial
 // Cleanup deletes expired sessions and resets idle limiter entries.
 func (s *Service) Cleanup(ctx context.Context) error {
 	s.LoginLimiter.Cleanup()
+	s.UserLimiter.Cleanup()
 	_, err := s.pool.Exec(ctx, `DELETE FROM sessions WHERE expires_at < now()`)
 	return err
 }

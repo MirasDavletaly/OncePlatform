@@ -2,6 +2,7 @@ package httpapi
 
 import (
 	"net/http"
+	"time"
 
 	"github.com/go-chi/chi/v5"
 
@@ -14,7 +15,6 @@ import (
 
 func (a *api) authRoutes(r chi.Router) {
 	r.Post("/auth/logout", a.logout)
-	r.Get("/auth/me", a.me)
 	r.Patch("/auth/me", a.updateMe)
 	r.Post("/auth/password", a.changePassword)
 
@@ -22,6 +22,10 @@ func (a *api) authRoutes(r chi.Router) {
 	r.Post("/users", a.createUser)
 	r.Patch("/users/{id}", a.updateUser)
 	r.Post("/users/{id}/reset-password", a.resetPassword)
+	r.Post("/users/{id}/invite", a.inviteUser)
+	r.Get("/users/registration-link", a.registrationLink)
+	r.Post("/users/registration-link", a.newRegistrationLink)
+	r.Delete("/users/registration-link", a.disableRegistrationLink)
 
 	r.Get("/me/tokens", a.listTokens)
 	r.Post("/me/tokens", a.createToken)
@@ -41,6 +45,7 @@ func (a *api) login(w http.ResponseWriter, r *http.Request) {
 		Username string `json:"username"`
 		Password string `json:"password"`
 	}
+	r.Body = http.MaxBytesReader(w, r.Body, 64<<10) // anonymous endpoint: no 8 MB bodies
 	if err := decode(w, r, &in); err != nil {
 		a.writeError(w, r, err)
 		return
@@ -66,9 +71,15 @@ func (a *api) logout(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
+// me is public: an anonymous visitor gets 200 with "user": null rather than
+// a 401, which browsers log as a console error on the sign-in page.
 func (a *api) me(w http.ResponseWriter, r *http.Request) {
 	p := principal(r)
 	csrf := a.auth.CSRF.EnsureCSRFCookie(w, r, auth.CSRFBinding(p))
+	if p == nil {
+		writeJSON(w, http.StatusOK, meResponse{Permissions: []workflow.Permission{}, CSRFToken: csrf})
+		return
+	}
 	writeJSON(w, http.StatusOK, meResponse{User: p.User, Permissions: workflow.PermissionsFor(p.User.Role), CSRFToken: csrf})
 }
 
@@ -150,6 +161,14 @@ func (a *api) listUsers(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"items": users})
 }
 
+// invitation is a user created or re-invited with a one-time code: the code is
+// in the response only, once.
+type invitation struct {
+	*auth.User
+	InviteCode string    `json:"invite_code,omitempty"`
+	ValidUntil time.Time `json:"invite_valid_until,omitzero"`
+}
+
 func (a *api) createUser(w http.ResponseWriter, r *http.Request) {
 	var in auth.CreateUserInput
 	if err := decode(w, r, &in); err != nil {
@@ -162,7 +181,115 @@ func (a *api) createUser(w http.ResponseWriter, r *http.Request) {
 		a.writeError(w, r, err)
 		return
 	}
-	writeJSON(w, http.StatusCreated, u)
+	out := invitation{User: u}
+	if in.Invite {
+		if out.InviteCode, out.ValidUntil, err = a.auth.IssueInvite(r.Context(), act, u.ID); err != nil {
+			a.writeError(w, r, err)
+			return
+		}
+		out.InvitePending = true
+	}
+	writeJSON(w, http.StatusCreated, out)
+}
+
+// inviteUser issues a new one-time code (a first sign-in, or a forgotten password).
+func (a *api) inviteUser(w http.ResponseWriter, r *http.Request) {
+	code, until, err := a.auth.IssueInvite(r.Context(), actor(r), chi.URLParam(r, "id"))
+	if err != nil {
+		a.writeError(w, r, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"invite_code": code, "invite_valid_until": until})
+}
+
+// activate signs in with a one-time code and sets the person's own password.
+func (a *api) activate(w http.ResponseWriter, r *http.Request) {
+	var in struct {
+		Username string `json:"username"`
+		Code     string `json:"code"`
+		Password string `json:"password"`
+	}
+	r.Body = http.MaxBytesReader(w, r.Body, 64<<10) // anonymous endpoint
+	if err := decode(w, r, &in); err != nil {
+		a.writeError(w, r, err)
+		return
+	}
+	res, err := a.auth.Activate(r.Context(), in.Username, in.Code, in.Password, auth.ClientIP(r), r.UserAgent())
+	if err != nil {
+		a.writeError(w, r, err)
+		return
+	}
+	auth.SetSessionCookie(w, r, res.Token, res.Session.ExpiresAt)
+	csrf := a.auth.CSRF.Issue(res.Session.ID)
+	auth.SetCSRFCookie(w, r, csrf)
+	writeJSON(w, http.StatusOK, meResponse{User: res.User, Permissions: workflow.PermissionsFor(res.User.Role), CSRFToken: csrf})
+}
+
+// ---------------------------------------------------------------------------
+// Registration link: people create their own recruiter accounts
+// ---------------------------------------------------------------------------
+
+func (a *api) writeRegistrationLink(w http.ResponseWriter, l *auth.RegistrationLink) {
+	if l == nil {
+		writeJSON(w, http.StatusOK, map[string]any{"url": nil})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"url": a.cfg.BaseURL + "/join/" + l.Token, "created_at": l.CreatedAt})
+}
+
+func (a *api) registrationLink(w http.ResponseWriter, r *http.Request) {
+	l, err := a.auth.RegistrationLink(r.Context(), actor(r))
+	if err != nil {
+		a.writeError(w, r, err)
+		return
+	}
+	a.writeRegistrationLink(w, l)
+}
+
+func (a *api) newRegistrationLink(w http.ResponseWriter, r *http.Request) {
+	l, err := a.auth.NewRegistrationLink(r.Context(), actor(r))
+	if err != nil {
+		a.writeError(w, r, err)
+		return
+	}
+	a.writeRegistrationLink(w, l)
+}
+
+func (a *api) disableRegistrationLink(w http.ResponseWriter, r *http.Request) {
+	if err := a.auth.DisableRegistrationLink(r.Context(), actor(r)); err != nil {
+		a.writeError(w, r, err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// registrationOpen is public: the registration page asks whether its link still works.
+func (a *api) registrationOpen(w http.ResponseWriter, r *http.Request) {
+	ok, err := a.auth.RegistrationOpen(r.Context(), r.URL.Query().Get("token"))
+	if err != nil {
+		a.writeError(w, r, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]bool{"open": ok})
+}
+
+// register creates a recruiter account through the registration link and signs the person in.
+func (a *api) register(w http.ResponseWriter, r *http.Request) {
+	var in auth.RegisterInput
+	r.Body = http.MaxBytesReader(w, r.Body, 64<<10) // anonymous endpoint
+	if err := decode(w, r, &in); err != nil {
+		a.writeError(w, r, err)
+		return
+	}
+	res, err := a.auth.Register(r.Context(), in, auth.ClientIP(r), r.UserAgent())
+	if err != nil {
+		a.writeError(w, r, err)
+		return
+	}
+	auth.SetSessionCookie(w, r, res.Token, res.Session.ExpiresAt)
+	csrf := a.auth.CSRF.Issue(res.Session.ID)
+	auth.SetCSRFCookie(w, r, csrf)
+	writeJSON(w, http.StatusCreated, meResponse{User: res.User, Permissions: workflow.PermissionsFor(res.User.Role), CSRFToken: csrf})
 }
 
 func (a *api) updateUser(w http.ResponseWriter, r *http.Request) {

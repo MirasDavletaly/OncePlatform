@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"path"
 	"runtime/debug"
 	"strings"
 	"time"
@@ -120,6 +121,29 @@ func (a *api) loadSession(next http.Handler) http.Handler {
 }
 
 // requireUser rejects anonymous requests with 401.
+// cvOnly confines users without the task permission (the recruiters) to the CV
+// section: every other API method answers 403. The interface hides the rest;
+// this is the check that counts.
+func cvOnly(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		p := auth.PrincipalFrom(r.Context())
+		if p != nil && !workflow.Can(p.User.Role, workflow.PermView) && !cvAllowed(path.Clean(r.URL.Path)) {
+			writeErrorCode(w, http.StatusForbidden, "forbidden", "Your role works with the CV database only")
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+
+// cvAllowed: the CV section (without the tasks' key personnel) and the user's own session and password.
+func cvAllowed(p string) bool {
+	switch p {
+	case "/api/v1/auth/logout", "/api/v1/auth/me", "/api/v1/auth/password":
+		return true
+	}
+	return strings.HasPrefix(p, "/api/v1/cv/")
+}
+
 func requireUser(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if auth.PrincipalFrom(r.Context()) == nil {

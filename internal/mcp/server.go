@@ -22,6 +22,7 @@ import (
 	"onceplatform/internal/apperr"
 	"onceplatform/internal/auth"
 	"onceplatform/internal/config"
+	"onceplatform/internal/cv"
 	"onceplatform/internal/files"
 	"onceplatform/internal/oauth"
 	"onceplatform/internal/search"
@@ -38,6 +39,7 @@ type Deps struct {
 	OAuth   *oauth.Server
 	Tickets *tickets.Service
 	Files   *files.Service
+	CV      *cv.Service
 	Search  *search.Service
 }
 
@@ -55,7 +57,11 @@ Use structured shortlist fields (fit_score and complexity: integers 1 to 5; mark
 
 Sent tasks have already been submitted and are never overdue. Closing as lost requires loss_reason: price, competitor, no_response or requirements. Determine it from the user's statement or explicit evidence in the task/comments/documents. If the reason is unknown or ambiguous, ask the user before closing; no_response is an actual lack of response, not a substitute for missing evidence. Preserve supporting evidence in the closure comment. get_overview returns lost_by_reason and list_tickets can filter by loss_reason.
 
-Typical flow for a tender: get_ticket → list_attachments → read_attachment for the technical specification ("tz" category) → analyse → save_technical_solution and/or add_comment. Use the analyze_tender prompt for a structured tender analysis.`
+Typical flow for a tender: get_ticket → list_attachments → read_attachment for the technical specification ("tz" category) → analyse → save_technical_solution and/or add_comment. Use the analyze_tender prompt for a structured tender analysis.
+
+When the specification lists key personnel (roles with experience, skills, certificates, languages), save them with set_cv_requirements: one role per position, the closest profession of the taxonomy, min_years as stated, skills and certificates as short names, conditions that cannot be scored (education, project experience) in notes. match_candidates then ranks the team's CV database for each role. Candidates are personal data: the portal returns them anonymised (code like CV-0007) and their names, contacts and CV files are never available through MCP.
+
+The portal shows every CV in the language of its interface (English or Russian) when Claude has translated it: when the user asks to translate CVs (or after CVs were uploaded or parsed again), use the translate_cvs prompt flow — list_candidates with needs_translation, get_candidate for the texts, save_candidate_translation for "en" and for "ru".`
 
 // NewHandler builds the authenticated MCP HTTP handler for /mcp.
 func NewHandler(d Deps) http.Handler {
@@ -85,6 +91,7 @@ func (s *server) newSDKServer() *sdk.Server {
 	})
 	s.registerTicketTools(srv)
 	s.registerOtherTools(srv)
+	s.registerCVTools(srv)
 	s.registerPrompts(srv)
 	return srv
 }
@@ -130,6 +137,10 @@ func caller(extra *sdk.RequestExtra) (workflow.Actor, *auth.User, error) {
 	u, ok := extra.TokenInfo.Extra["user"].(*auth.User)
 	if !ok || u == nil {
 		return workflow.Actor{}, nil, errors.New("unauthenticated request")
+	}
+	// the recruiter works with the CV database in the portal only: no tasks, no Claude
+	if !workflow.Can(u.Role, workflow.PermView) {
+		return workflow.Actor{}, nil, errors.New("forbidden: this account works with the CV database in the portal only and has no access through Claude")
 	}
 	ip, _ := extra.TokenInfo.Extra["ip"].(string)
 	return u.Actor(workflow.ViaMCP, ip), u, nil

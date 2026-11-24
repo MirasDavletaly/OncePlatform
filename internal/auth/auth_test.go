@@ -2,10 +2,26 @@ package auth
 
 import (
 	"bytes"
+	"context"
 	"strings"
 	"testing"
 	"time"
+
+	"onceplatform/internal/apperr"
 )
+
+// A login locked by failures from other IPs stays locked for a fresh IP
+// (rotating IPs must not bypass the limit). Blocked logins never reach the DB.
+func TestLoginLockedPerUsernameAcrossIPs(t *testing.T) {
+	s := &Service{LoginLimiter: NewLimiter(5, time.Minute, 5*time.Minute), UserLimiter: NewLimiter(3, time.Hour, time.Hour)}
+	for i := 0; i < 3; i++ {
+		s.UserLimiter.Hit("alessio")
+	}
+	_, err := s.Login(context.Background(), " Alessio ", "guess", "203.0.113.9", "")
+	if e, ok := apperr.As(err); !ok || e.Code != "rate_limited" {
+		t.Fatalf("expected rate_limited, got %v", err)
+	}
+}
 
 func TestHashAndVerifyPassword(t *testing.T) {
 	hash, err := HashPassword("correct horse battery")

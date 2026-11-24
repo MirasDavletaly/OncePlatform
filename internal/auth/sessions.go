@@ -31,8 +31,13 @@ type LoginResult struct {
 // Login verifies credentials (with rate limiting per IP + login) and creates a session.
 func (s *Service) Login(ctx context.Context, username, password, ip, userAgent string) (*LoginResult, error) {
 	username = strings.TrimSpace(username)
-	key := ip + "|" + strings.ToLower(username)
-	if blocked, wait := s.LoginLimiter.Blocked(key); blocked {
+	userKey := strings.ToLower(username)
+	key := ip + "|" + userKey
+	blocked, wait := s.LoginLimiter.Blocked(key)
+	if b, w := s.UserLimiter.Blocked(userKey); b && w > wait {
+		blocked, wait = true, w
+	}
+	if blocked {
 		mins := int(wait.Minutes()) + 1
 		return nil, apperr.RateLimited(fmt.Sprintf("Too many sign-in attempts. Try again in %d min.", mins))
 	}
@@ -58,6 +63,7 @@ func (s *Service) Login(ctx context.Context, username, password, ip, userAgent s
 	}
 	if !found || !ok || !active {
 		s.LoginLimiter.Hit(key)
+		s.UserLimiter.Hit(userKey)
 		details := map[string]any{"username": username}
 		if found && ok && !active {
 			details["reason"] = "inactive"
@@ -69,8 +75,23 @@ func (s *Service) Login(ctx context.Context, username, password, ip, userAgent s
 		}
 		return nil, apperr.Unauthorized("Wrong login or password")
 	}
+	// UserLimiter is not reset: a success must not clear an attacker's count.
 	s.LoginLimiter.Reset(key)
 
+	var res *LoginResult
+	err = db.InTx(ctx, s.pool, func(tx pgx.Tx) (err error) {
+		res, err = s.startSession(ctx, tx, userID, ip, userAgent)
+		return err
+	})
+	if err != nil {
+		return nil, err
+	}
+	return res, nil
+}
+
+// startSession creates a browser session for a user who has just proven who
+// they are (a password or a one-time code).
+func (s *Service) startSession(ctx context.Context, tx pgx.Tx, userID, ip, userAgent string) (*LoginResult, error) {
 	token, tokenHash, err := GenerateToken(PrefixSession)
 	if err != nil {
 		return nil, err
@@ -79,26 +100,20 @@ func (s *Service) Login(ctx context.Context, username, password, ip, userAgent s
 		userAgent = userAgent[:400]
 	}
 	res := &LoginResult{Token: token, Session: &Session{UserID: userID}}
-	err = db.InTx(ctx, s.pool, func(tx pgx.Tx) error {
-		if err := tx.QueryRow(ctx, `
-			INSERT INTO sessions (user_id, token_hash, expires_at, ip, user_agent)
-			VALUES ($1, $2, now() + $3::interval, $4, $5) RETURNING id, expires_at`,
-			userID, tokenHash, fmt.Sprintf("%d seconds", int(SessionTTL.Seconds())), ip, userAgent).
-			Scan(&res.Session.ID, &res.Session.ExpiresAt); err != nil {
-			return err
-		}
-		u, err := scanUser(tx.QueryRow(ctx, `UPDATE users SET last_login_at = now() WHERE id = $1 RETURNING `+userColumns, userID))
-		if err != nil {
-			return err
-		}
-		res.User = u
-		return audit.Write(ctx, tx, audit.Entry{UserID: userID, Action: "auth.login", EntityType: "user",
-			EntityID: userID, Via: workflow.ViaWeb, IP: ip})
-	})
+	if err := tx.QueryRow(ctx, `
+		INSERT INTO sessions (user_id, token_hash, expires_at, ip, user_agent)
+		VALUES ($1, $2, now() + $3::interval, $4, $5) RETURNING id, expires_at`,
+		userID, tokenHash, fmt.Sprintf("%d seconds", int(SessionTTL.Seconds())), ip, userAgent).
+		Scan(&res.Session.ID, &res.Session.ExpiresAt); err != nil {
+		return nil, err
+	}
+	u, err := scanUser(tx.QueryRow(ctx, `UPDATE users SET last_login_at = now() WHERE id = $1 RETURNING `+userColumns, userID))
 	if err != nil {
 		return nil, err
 	}
-	return res, nil
+	res.User = u
+	return res, audit.Write(ctx, tx, audit.Entry{UserID: userID, Action: "auth.login", EntityType: "user",
+		EntityID: userID, Via: workflow.ViaWeb, IP: ip})
 }
 
 // LookupSession resolves a session token to its user. When the sliding expiry

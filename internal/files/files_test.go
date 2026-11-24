@@ -47,6 +47,7 @@ const docXML = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <w:p><w:r><w:t>Техническое задание</w:t></w:r></w:p>
 <w:p><w:r><w:t xml:space="preserve">Срок: </w:t></w:r><w:r><w:tab/><w:t>30 дней</w:t></w:r></w:p>
 <w:p><w:r><w:t>Қазақ тілі</w:t><w:br/><w:t>жол</w:t></w:r></w:p>
+<w:p><w:r><w:t>R&D &IT &amp; QA</w:t></w:r></w:p>
 </w:body></w:document>`
 
 func TestCheckContent(t *testing.T) {
@@ -149,7 +150,7 @@ func TestExtractDOCX(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, want := range []string{"Техническое задание", "Срок: \t30 дней", "Қазақ тілі\nжол"} {
+	for _, want := range []string{"Техническое задание", "Срок: \t30 дней", "Қазақ тілі\nжол", "R&D &IT & QA"} {
 		if !strings.Contains(text, want) {
 			t.Errorf("extracted text %q does not contain %q", text, want)
 		}

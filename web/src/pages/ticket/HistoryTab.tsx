@@ -88,6 +88,8 @@ function describe(r: AuditRecord): { text: string; body?: ReactNode } {
       return { text: fmt(t.history.fileUpdate, { name: s(d.name) }) }
     case 'attachment.delete':
       return { text: fmt(t.history.fileDelete, { name: s(d.name) }) }
+    case 'ticket.cv_requirements':
+      return { text: fmt(t.history.cvRequirements, { roles: (Array.isArray(d.roles) ? d.roles : []).join(', ') || '—' }) }
   }
   return { text: r.action }
 }

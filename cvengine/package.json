@@ -1,0 +1,8 @@
+{
+  "name": "onceplatform-cvengine",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "node --test cv.test.mjs cert.test.mjs"
+  }
+}

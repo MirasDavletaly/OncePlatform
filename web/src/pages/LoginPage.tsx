@@ -15,6 +15,10 @@ export function LoginPage({ loggedIn }: { loggedIn: boolean }) {
   const qc = useQueryClient()
   const [username, setUsername] = useState('')
   const [password, setPassword] = useState('')
+  // a one-time code from the administrator: sign in once and set an own password
+  const [withCode, setWithCode] = useState(params.has('code'))
+  const [code, setCode] = useState('')
+  const [confirm, setConfirm] = useState('')
   const [error, setError] = useState('')
   const [busy, setBusy] = useState(false)
   const [, rerender] = useState(0)
@@ -32,9 +36,15 @@ export function LoginPage({ loggedIn }: { loggedIn: boolean }) {
   const submit = async (e: FormEvent) => {
     e.preventDefault()
     setError('')
+    if (withCode && password !== confirm) {
+      setError(t.login.mismatch)
+      return
+    }
     setBusy(true)
     try {
-      let me = await api.post<Me>('/auth/login', { username, password })
+      let me = withCode
+        ? await api.post<Me>('/auth/activate', { username, code, password })
+        : await api.post<Me>('/auth/login', { username, password })
       // Keep the language chosen on this page as the user's preference.
       if (me.user.language !== language) {
         me = await api.patch<Me>('/auth/me', { language })
@@ -85,8 +95,8 @@ export function LoginPage({ loggedIn }: { loggedIn: boolean }) {
           }}
         />
         <form onSubmit={submit} className="w-full max-w-sm" noValidate>
-          <h1 className="font-display text-2xl font-semibold tracking-tight">{t.login.title}</h1>
-          <p className="mt-2 text-sm text-muted lg:hidden">{t.login.subtitle}</p>
+          <h1 className="font-display text-2xl font-semibold tracking-tight">{withCode ? t.login.codeTitle : t.login.title}</h1>
+          <p className={withCode ? 'mt-2 text-sm text-muted' : 'mt-2 text-sm text-muted lg:hidden'}>{withCode ? t.login.codeIntro : t.login.subtitle}</p>
           <div className="mt-8 flex flex-col gap-4">
             <Field label={t.login.username} htmlFor="username">
               <Input
@@ -101,25 +111,64 @@ export function LoginPage({ loggedIn }: { loggedIn: boolean }) {
                 onChange={(e) => setUsername(e.target.value)}
               />
             </Field>
-            <Field label={t.login.password} htmlFor="password">
+            {withCode && (
+              <Field label={t.login.code} htmlFor="code">
+                <Input
+                  id="code"
+                  type="text"
+                  autoComplete="one-time-code"
+                  autoCapitalize="characters"
+                  spellCheck={false}
+                  required
+                  placeholder="XXXXX-XXXXX"
+                  className="num tracking-wider uppercase"
+                  value={code}
+                  onChange={(e) => setCode(e.target.value)}
+                />
+              </Field>
+            )}
+            <Field label={withCode ? t.login.newPassword : t.login.password} htmlFor="password" hint={withCode ? t.login.newPasswordHint : undefined}>
               <Input
                 id="password"
                 type="password"
-                autoComplete="current-password"
+                autoComplete={withCode ? 'new-password' : 'current-password'}
                 required
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
               />
             </Field>
+            {withCode && (
+              <Field label={t.login.confirmPassword} htmlFor="confirm">
+                <Input id="confirm" type="password" autoComplete="new-password" required value={confirm} onChange={(e) => setConfirm(e.target.value)} />
+              </Field>
+            )}
             {error && (
               <p role="alert" className="flex items-start gap-2 rounded-lg bg-danger-soft px-3 py-2.5 text-sm text-danger">
                 <AlertTriangle className="mt-0.5 size-4 shrink-0" aria-hidden />
                 {error}
               </p>
             )}
-            <Button type="submit" variant="primary" loading={busy} disabled={!username || !password} className="mt-2 w-full">
-              {busy ? t.login.submitting : t.login.submit}
+            <Button
+              type="submit"
+              variant="primary"
+              loading={busy}
+              disabled={!username || !password || (withCode && (!code.trim() || password.length < 8 || !confirm))}
+              className="mt-2 w-full"
+            >
+              {busy ? t.login.submitting : withCode ? t.login.activate : t.login.submit}
             </Button>
+            <button
+              type="button"
+              className="text-left text-[13px] text-accent hover:underline"
+              onClick={() => {
+                setWithCode(!withCode)
+                setError('')
+                setPassword('')
+                setConfirm('')
+              }}
+            >
+              {withCode ? t.login.backToPassword : t.login.withCode}
+            </button>
             <p className="text-[13px] leading-relaxed text-muted">{t.login.noAccount}</p>
           </div>
         </form>

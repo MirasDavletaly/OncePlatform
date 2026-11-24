@@ -2,7 +2,6 @@ package httpapi
 
 import (
 	"bytes"
-	"io"
 	"io/fs"
 	"log/slog"
 	"mime"
@@ -65,7 +64,8 @@ func (s *spa) serve(w http.ResponseWriter, r *http.Request) {
 				// Vite emits content-hashed file names under assets/.
 				w.Header().Set("Cache-Control", "public, max-age=31536000, immutable")
 			} else {
-				w.Header().Set("Cache-Control", "public, max-age=3600")
+				// Fixed names (theme-init.js, favicon.svg): revalidate via Last-Modified.
+				w.Header().Set("Cache-Control", "no-cache")
 			}
 			http.ServeContent(w, r, p, s.started, bytes.NewReader(data))
 			return
@@ -78,8 +78,5 @@ func (s *spa) serve(w http.ResponseWriter, r *http.Request) {
 	}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.Header().Set("Cache-Control", "no-cache")
-	if r.Method == http.MethodHead {
-		return
-	}
-	_, _ = io.Copy(w, bytes.NewReader(s.index))
+	http.ServeContent(w, r, "index.html", s.started, bytes.NewReader(s.index))
 }

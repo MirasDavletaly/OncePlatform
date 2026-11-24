@@ -153,6 +153,7 @@ func extractDOCX(path string) (string, error) {
 
 func wordprocessingText(r io.Reader) (string, error) {
 	dec := xml.NewDecoder(r)
+	dec.Strict = false // some generators write a bare "&" (R&D); Word opens such files
 	var b strings.Builder
 	inText := false
 	for {
@@ -254,6 +255,7 @@ func extractPPTX(path string) (string, error) {
 		}
 		fmt.Fprintf(&b, "--- Slide %d ---\n", s.n)
 		dec := xml.NewDecoder(rc)
+		dec.Strict = false
 		inText := false
 		for {
 			tok, err := dec.Token()

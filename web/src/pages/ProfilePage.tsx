@@ -231,16 +231,18 @@ function AppsCard() {
 }
 
 export function ProfilePage() {
-  const { me } = useSession()
+  const { me, can } = useSession()
+  // Claude (OAuth applications, API tokens) is for the tender team; the recruiter has the password only
+  const claude = can('view')
   return (
     <div className="mx-auto max-w-4xl">
-      <PageHeader title={t.profile.title} subtitle={`${me.user.full_name} · ${me.user.email} · ${t.role[me.user.role]}`} />
+      <PageHeader title={t.profile.title} subtitle={[me.user.full_name, me.user.email, t.role[me.user.role]].filter(Boolean).join(' · ')} />
       <div className="grid gap-6">
         <div className="grid gap-6 lg:grid-cols-2">
           <PasswordCard />
-          <AppsCard />
+          {claude && <AppsCard />}
         </div>
-        <TokensCard />
+        {claude && <TokensCard />}
       </div>
     </div>
   )

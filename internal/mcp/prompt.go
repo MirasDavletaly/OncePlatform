@@ -23,6 +23,45 @@ func (s *server) registerPrompts(srv *sdk.Server) {
 			Required:    true,
 		}},
 	}, s.analyzeTender)
+	srv.AddPrompt(&sdk.Prompt{
+		Name:        "translate_cvs",
+		Title:       "Translate CVs",
+		Description: "Translate the CV database into English and Russian so that the portal shows every CV in the language of its interface: all CVs whose translation is missing or outdated, or one CV.",
+		Arguments: []*sdk.PromptArgument{{
+			Name:        "candidate",
+			Title:       "Candidate",
+			Description: "One candidate code like CV-0007; empty for every CV that needs it",
+		}},
+	}, s.translateCVs)
+}
+
+func (s *server) translateCVs(ctx context.Context, req *sdk.GetPromptRequest) (*sdk.GetPromptResult, error) {
+	if _, _, err := caller(req.Extra); err != nil {
+		return nil, err
+	}
+	which := "Call list_candidates with needs_translation=true and work through every CV it returns."
+	if c := strings.TrimSpace(req.Params.Arguments["candidate"]); c != "" {
+		which = fmt.Sprintf("Translate candidate %s.", c)
+	}
+	text := which + `
+
+For each CV:
+1. Call get_candidate: it returns the CV's texts under keys (basics.label, work.0.position, work.0.summary, projects.0.name, education.0.area, skills.3.name ...) and cv_language.
+2. Translate every text into English and, separately, into Russian (a CV in Kazakh needs both; a text already in the target language is copied as it is).
+3. Call save_candidate_translation twice, language "en" and language "ru", with all texts under exactly the same keys.
+
+How to translate:
+- Keep the meaning and the facts; do not add, drop or embellish anything.
+- Proper names of companies, products and projects keep their name; translate only the legal form and generic words: ТОО → LLP / ТОО, АО → JSC / АО; university names in their established form (Евразийский национальный университет имени Л.Н. Гумилева → L.N. Gumilyov Eurasian National University).
+- Technologies, standards and certificate names stay as they are (Jira, Scrum, PMP, ITIL 4 Foundation).
+- Job titles in the usual form of the target language (Руководитель проектов → Project Manager).
+- Texts are anonymised: names and contacts are masked as [name], [e-mail] and [phone]; keep these placeholders exactly as they are.
+
+Finish with a short report: how many CVs were translated and any texts you were unsure about.`
+	return &sdk.GetPromptResult{
+		Description: "Translate CVs into English and Russian",
+		Messages:    []*sdk.PromptMessage{{Role: "user", Content: &sdk.TextContent{Text: text}}},
+	}, nil
 }
 
 func (s *server) analyzeTender(ctx context.Context, req *sdk.GetPromptRequest) (*sdk.GetPromptResult, error) {

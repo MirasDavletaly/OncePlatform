@@ -31,13 +31,25 @@ const (
 
 var errInvalidHash = errors.New("invalid password hash format")
 
+// argonSlots caps concurrent argon2 computations. Each one allocates
+// argonMemory KiB, so without a cap a flood of anonymous login requests
+// (random logins bypass the per-login limiter) can exhaust the host's RAM.
+// ponytail: fixed 4 slots (~128 MiB); size from available RAM if the host changes.
+var argonSlots = make(chan struct{}, 4)
+
+func idKey(password, salt []byte, time, memory uint32, threads uint8, keyLen uint32) []byte {
+	argonSlots <- struct{}{}
+	defer func() { <-argonSlots }()
+	return argon2.IDKey(password, salt, time, memory, threads, keyLen)
+}
+
 // HashPassword returns an encoded argon2id hash in PHC string format.
 func HashPassword(password string) (string, error) {
 	salt := make([]byte, argonSaltLen)
 	if _, err := rand.Read(salt); err != nil {
 		return "", err
 	}
-	key := argon2.IDKey([]byte(password), salt, argonTime, argonMemory, argonThreads, argonKeyLen)
+	key := idKey([]byte(password), salt, argonTime, argonMemory, argonThreads, argonKeyLen)
 	b64 := base64.RawStdEncoding
 	return fmt.Sprintf("$argon2id$v=%d$m=%d,t=%d,p=%d$%s$%s",
 		argon2.Version, argonMemory, argonTime, argonThreads, b64.EncodeToString(salt), b64.EncodeToString(key)), nil
@@ -70,7 +82,7 @@ func VerifyPassword(password, encoded string) (bool, error) {
 	if err != nil || len(want) == 0 {
 		return false, errInvalidHash
 	}
-	got := argon2.IDKey([]byte(password), salt, iterations, memory, threads, uint32(len(want)))
+	got := idKey([]byte(password), salt, iterations, memory, threads, uint32(len(want)))
 	return subtle.ConstantTimeCompare(got, want) == 1, nil
 }
 

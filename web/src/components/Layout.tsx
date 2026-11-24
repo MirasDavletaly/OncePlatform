@@ -6,6 +6,7 @@ import {
   Bot,
   ClipboardList,
   Columns3,
+  IdCard,
   Languages,
   LayoutDashboard,
   LogOut,
@@ -69,14 +70,16 @@ function Brand() {
 function Sidebar({ onNavigate }: { onNavigate?: () => void }) {
   const { can } = useSession()
   const admin = can('admin.users') || can('admin.audit') || can('admin.oauth_clients')
+  const tasks = can('view') // the recruiter sees the CV database only
   return (
     <div className="flex h-full flex-col gap-6 py-5">
       <Brand />
       <nav className="flex flex-col gap-0.5 px-3" aria-label={t.nav.menu}>
-        <NavItem to="/" end icon={<LayoutDashboard />} label={t.nav.dashboard} onClick={onNavigate} />
-        <NavItem to="/kanban" icon={<Columns3 />} label={t.nav.kanban} onClick={onNavigate} />
-        <NavItem to="/tickets" icon={<ClipboardList />} label={t.nav.tickets} onClick={onNavigate} />
-        <NavItem to="/search" icon={<Search />} label={t.nav.search} onClick={onNavigate} />
+        {tasks && <NavItem to="/" end icon={<LayoutDashboard />} label={t.nav.dashboard} onClick={onNavigate} />}
+        {tasks && <NavItem to="/kanban" icon={<Columns3 />} label={t.nav.kanban} onClick={onNavigate} />}
+        {tasks && <NavItem to="/tickets" icon={<ClipboardList />} label={t.nav.tickets} onClick={onNavigate} />}
+        {can('cv.view') && <NavItem to="/cv" icon={<IdCard />} label={t.nav.cv} onClick={onNavigate} />}
+        {tasks && <NavItem to="/search" icon={<Search />} label={t.nav.search} onClick={onNavigate} />}
       </nav>
       {admin && (
         <nav className="flex flex-col gap-0.5 px-3" aria-label={t.nav.admin}>
@@ -88,9 +91,11 @@ function Sidebar({ onNavigate }: { onNavigate?: () => void }) {
           )}
         </nav>
       )}
-      <div className="mt-auto px-3">
-        <NavItem to="/settings/claude" icon={<Bot />} label={t.nav.connectClaude} onClick={onNavigate} />
-      </div>
+      {tasks && (
+        <div className="mt-auto px-3">
+          <NavItem to="/settings/claude" icon={<Bot />} label={t.nav.connectClaude} onClick={onNavigate} />
+        </div>
+      )}
     </div>
   )
 }
@@ -177,7 +182,7 @@ function NotificationBell() {
 }
 
 function UserMenu() {
-  const { me } = useSession()
+  const { me, can } = useSession()
   const qc = useQueryClient()
   const navigate = useNavigate()
   const [open, setOpen] = useState(false)
@@ -251,13 +256,15 @@ function UserMenu() {
           >
             <UserRound className="size-4 text-muted" /> {t.nav.profile}
           </Link>
-          <Link
-            to="/settings/claude"
-            onClick={() => setOpen(false)}
-            className="flex items-center gap-2.5 rounded-lg px-3 py-2 text-sm hover:bg-surface-2"
-          >
-            <Bot className="size-4 text-muted" /> {t.nav.connectClaude}
-          </Link>
+          {can('view') && (
+            <Link
+              to="/settings/claude"
+              onClick={() => setOpen(false)}
+              className="flex items-center gap-2.5 rounded-lg px-3 py-2 text-sm hover:bg-surface-2"
+            >
+              <Bot className="size-4 text-muted" /> {t.nav.connectClaude}
+            </Link>
+          )}
           <div className="px-3 pt-2 pb-1 text-[12px] text-muted">{t.nav.theme}</div>
           <div className="mx-2 mb-1 flex gap-1 rounded-lg bg-paper p-1">
             {themeBtn('light', t.nav.themeLight, <Sun className="size-3.5" />)}
@@ -343,15 +350,17 @@ export function Layout({ children }: { children: ReactNode }) {
         <IconButton label={t.nav.menu} onClick={() => setDrawer(true)} className="-ml-2 lg:hidden">
           <Menu className="size-5" />
         </IconButton>
-        <GlobalSearch />
+        {can('view') && <GlobalSearch />}
         <div className="ml-auto flex items-center gap-1.5">
-          <Link
-            to="/search"
-            aria-label={t.nav.search}
-            className="inline-flex size-9 items-center justify-center rounded-lg text-muted hover:bg-surface-2 hover:text-ink sm:hidden"
-          >
-            <Search className="size-[18px]" />
-          </Link>
+          {can('view') && (
+            <Link
+              to="/search"
+              aria-label={t.nav.search}
+              className="inline-flex size-9 items-center justify-center rounded-lg text-muted hover:bg-surface-2 hover:text-ink sm:hidden"
+            >
+              <Search className="size-[18px]" />
+            </Link>
+          )}
           {can('ticket.create') && (
             <Link to="/tickets/new" className={buttonClass('primary', 'sm', 'hidden sm:inline-flex')}>
               <Plus className="size-4" />
@@ -359,7 +368,7 @@ export function Layout({ children }: { children: ReactNode }) {
             </Link>
           )}
           <TopBarLanguage />
-          <NotificationBell />
+          {can('view') && <NotificationBell />}
           <UserMenu />
         </div>
       </header>

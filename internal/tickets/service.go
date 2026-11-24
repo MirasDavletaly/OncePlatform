@@ -298,11 +298,12 @@ func (s *Service) checkUser(ctx context.Context, q db.Querier, id string) error 
 		return apperr.Validation("Assignee not found")
 	}
 	var ok bool
-	if err := q.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM users WHERE id = $1 AND is_active)`, id).Scan(&ok); err != nil {
+	// a recruiter works with the CV database only and cannot hold a task
+	if err := q.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM users WHERE id = $1 AND is_active AND role <> 'recruiter')`, id).Scan(&ok); err != nil {
 		return err
 	}
 	if !ok {
-		return apperr.Validation("Assignee not found or deactivated")
+		return apperr.Validation("Assignee not found, deactivated or works with the CV database only")
 	}
 	return nil
 }

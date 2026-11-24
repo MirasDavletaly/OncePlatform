@@ -92,7 +92,7 @@ func MentionedUsers(ctx context.Context, q db.Querier, handles []string) ([]User
 		return nil, nil
 	}
 	rows, err := q.Query(ctx, `SELECT id, full_name FROM users
-		WHERE is_active AND (lower(username) = ANY($1) OR lower(split_part(full_name, ' ', 1)) = ANY($1))`, handles)
+		WHERE is_active AND role <> 'recruiter' AND (lower(username) = ANY($1) OR lower(split_part(full_name, ' ', 1)) = ANY($1))`, handles)
 	if err != nil {
 		return nil, err
 	}
@@ -108,10 +108,11 @@ func MentionedUsers(ctx context.Context, q db.Querier, handles []string) ([]User
 	return out, rows.Err()
 }
 
-// ActiveUserIDs returns the IDs of all active users (recipients of
-// notifications about tasks that belong to everyone).
+// ActiveUserIDs returns the IDs of all active members of the tender team
+// (recipients of notifications about tasks that belong to everyone; the
+// recruiters do not see tasks).
 func ActiveUserIDs(ctx context.Context, q db.Querier) ([]string, error) {
-	rows, err := q.Query(ctx, `SELECT id FROM users WHERE is_active`)
+	rows, err := q.Query(ctx, `SELECT id FROM users WHERE is_active AND role <> 'recruiter'`)
 	if err != nil {
 		return nil, err
 	}

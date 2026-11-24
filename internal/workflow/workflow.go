@@ -20,10 +20,11 @@ const (
 	RoleAdmin       Role = "admin"       // руководитель
 	RoleCoordinator Role = "coordinator" // координатор
 	RoleAnalyst     Role = "analyst"     // аналитик
+	RoleRecruiter   Role = "recruiter"   // рекрутер: только база резюме (добавление и правка), задач не видит
 )
 
 // Roles lists all roles.
-var Roles = []Role{RoleAdmin, RoleCoordinator, RoleAnalyst}
+var Roles = []Role{RoleAdmin, RoleCoordinator, RoleAnalyst, RoleRecruiter}
 
 func (r Role) Valid() bool { return slices.Contains(Roles, r) }
 
@@ -87,8 +88,14 @@ const (
 	PermUsersManage       Permission = "admin.users"         // пользователи
 	PermAuditView         Permission = "admin.audit"         // журнал аудита
 	PermOAuthClientsAdmin Permission = "admin.oauth_clients" // все OAuth-клиенты
+	PermCVView            Permission = "cv.view"             // CV: обезличенные профили и подбор
+	PermCVManage          Permission = "cv.manage"           // CV: персональные данные, загрузка, правка
+	PermCVDelete          Permission = "cv.delete"           // CV: удаление кандидата по его запросу
 )
 
+// allRoles are the roles of the tender team (they work with tasks); the
+// recruiter works with the CV database only and holds no task permission:
+// without PermView the API and MCP refuse everything but the CV section.
 var allRoles = []Role{RoleAdmin, RoleCoordinator, RoleAnalyst}
 
 // permissionMatrix maps each permission to the roles that hold it.
@@ -102,12 +109,15 @@ var permissionMatrix = map[Permission][]Role{
 	PermUsersManage:       {RoleAdmin},
 	PermAuditView:         {RoleAdmin},
 	PermOAuthClientsAdmin: {RoleAdmin},
+	PermCVView:            {RoleAdmin, RoleCoordinator, RoleAnalyst, RoleRecruiter},
+	PermCVManage:          {RoleAdmin, RoleCoordinator, RoleRecruiter},
+	PermCVDelete:          {RoleAdmin, RoleCoordinator},
 }
 
 // AllPermissions lists every permission in a stable order.
 var AllPermissions = []Permission{
 	PermView, PermTicketCreate, PermTicketEdit, PermSolutionEdit, PermFilesComments,
-	PermDelete, PermUsersManage, PermAuditView, PermOAuthClientsAdmin,
+	PermDelete, PermUsersManage, PermAuditView, PermOAuthClientsAdmin, PermCVView, PermCVManage, PermCVDelete,
 }
 
 // Can reports whether role holds permission p.
@@ -310,6 +320,12 @@ func forbiddenMessage(p Permission) string {
 		return "Only the admin can delete"
 	case PermUsersManage, PermAuditView, PermOAuthClientsAdmin:
 		return "This section is available to the admin only"
+	case PermCVManage:
+		return "Only the admin, the coordinator and the recruiter can see and change candidates' personal data"
+	case PermCVDelete:
+		return "Only the admin and the coordinator can delete a candidate"
+	case PermView:
+		return "Your role works with the CV database only"
 	}
 	return "You do not have permission for this action"
 }

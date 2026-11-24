@@ -35,7 +35,7 @@ func TestToolsAndPrompts(t *testing.T) {
 	want := []string{
 		"get_overview", "list_tickets", "get_ticket", "create_ticket", "update_ticket", "change_ticket_status",
 		"save_technical_solution", "add_comment", "list_attachments", "read_attachment", "upload_attachment",
-		"search",
+		"search", "set_cv_requirements", "match_candidates", "list_candidates", "get_candidate", "save_candidate_translation",
 	}
 	var names []string
 	for _, tool := range tools.Tools {
@@ -67,8 +67,9 @@ func TestToolsAndPrompts(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(prompts.Prompts) != 1 || prompts.Prompts[0].Name != "analyze_tender" ||
-		len(prompts.Prompts[0].Arguments) != 1 || !prompts.Prompts[0].Arguments[0].Required {
+	if len(prompts.Prompts) != 2 || prompts.Prompts[0].Name != "analyze_tender" ||
+		len(prompts.Prompts[0].Arguments) != 1 || !prompts.Prompts[0].Arguments[0].Required ||
+		prompts.Prompts[1].Name != "translate_cvs" || prompts.Prompts[1].Arguments[0].Required {
 		t.Errorf("unexpected prompts: %+v", prompts.Prompts)
 	}
 

@@ -8,26 +8,29 @@ import (
 
 func TestPermissionMatrix(t *testing.T) {
 	type row struct {
-		perm                        Permission
-		admin, coordinator, analyst bool
+		perm                                   Permission
+		admin, coordinator, analyst, recruiter bool
 	}
-	// Mirrors the table in the specification (section 3).
+	// Mirrors the table in the specification (section 3); the recruiter works with the CV database only.
 	rows := []row{
-		{PermView, true, true, true},
-		{PermTicketCreate, true, true, false},
-		{PermTicketEdit, true, true, false},
-		{PermSolutionEdit, true, false, true},
-		{PermFilesComments, true, true, true},
-		{PermDelete, true, false, false},
-		{PermUsersManage, true, false, false},
-		{PermAuditView, true, false, false},
-		{PermOAuthClientsAdmin, true, false, false},
+		{PermView, true, true, true, false},
+		{PermTicketCreate, true, true, false, false},
+		{PermTicketEdit, true, true, false, false},
+		{PermSolutionEdit, true, false, true, false},
+		{PermFilesComments, true, true, true, false},
+		{PermDelete, true, false, false, false},
+		{PermUsersManage, true, false, false, false},
+		{PermAuditView, true, false, false, false},
+		{PermOAuthClientsAdmin, true, false, false, false},
+		{PermCVView, true, true, true, true},
+		{PermCVManage, true, true, false, true},
+		{PermCVDelete, true, true, false, false},
 	}
 	if len(rows) != len(AllPermissions) {
 		t.Fatalf("test covers %d permissions, matrix has %d", len(rows), len(AllPermissions))
 	}
 	for _, r := range rows {
-		for role, want := range map[Role]bool{RoleAdmin: r.admin, RoleCoordinator: r.coordinator, RoleAnalyst: r.analyst} {
+		for role, want := range map[Role]bool{RoleAdmin: r.admin, RoleCoordinator: r.coordinator, RoleAnalyst: r.analyst, RoleRecruiter: r.recruiter} {
 			if got := Can(role, r.perm); got != want {
 				t.Errorf("Can(%s, %s) = %v, want %v", role, r.perm, got, want)
 			}

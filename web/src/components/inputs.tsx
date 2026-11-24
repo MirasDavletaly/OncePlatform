@@ -36,7 +36,7 @@ export function UserSelect({
   return (
     <Select id={id} value={value} onChange={(e) => onChange(e.target.value)}>
       <option value="">{emptyLabel}</option>
-      {data.map((u) => (
+      {data.filter((u) => u.role !== 'recruiter').map((u) => (
         <option key={u.id} value={u.id}>
           {u.full_name} · {t.role[u.role]}
         </option>
@@ -76,6 +76,7 @@ export function MentionTextarea({
     if (query === null) return []
     const q = query.toLowerCase()
     return users
+      .filter((u) => u.role !== 'recruiter') // the recruiters do not see tasks or comments
       .filter((u) => u.full_name.toLowerCase().includes(q) || mentionHandle(u).toLowerCase().includes(q))
       .slice(0, 6)
   }, [query, users])

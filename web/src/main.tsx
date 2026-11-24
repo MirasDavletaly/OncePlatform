@@ -10,6 +10,10 @@ import { App } from './App'
 import { ConfirmProvider, ToastProvider } from './components/ui'
 import { ApiError } from './lib/api'
 
+// A deploy removes the previous build's page chunks: an old tab that fails
+// to load one reloads itself to pick up the new build.
+window.addEventListener('vite:preloadError', () => window.location.reload())
+
 // Server state is cached only in memory (TanStack Query); nothing is
 // persisted in the browser.
 const queryClient = new QueryClient({

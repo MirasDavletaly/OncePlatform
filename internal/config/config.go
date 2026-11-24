@@ -34,6 +34,10 @@ type Config struct {
 	UploadMaxMB int64
 	StoragePath string
 
+	// CVEngineDir holds the CV rules engine (cvengine/cli.mjs), run with NodeBin.
+	CVEngineDir string
+	NodeBin     string
+
 	SeedDemo bool
 	LogLevel slog.Level
 
@@ -51,6 +55,8 @@ func Load() (*Config, error) {
 		DatabaseURL:     strings.TrimSpace(os.Getenv("DATABASE_URL")),
 		InitialPassword: os.Getenv("INITIAL_PASSWORD"),
 		StoragePath:     env("STORAGE_PATH", "/data/uploads"),
+		CVEngineDir:     env("CV_ENGINE_DIR", "/app/cvengine"),
+		NodeBin:         env("NODE_BIN", "node"),
 	}
 
 	base := strings.TrimRight(strings.TrimSpace(os.Getenv("APP_BASE_URL")), "/")

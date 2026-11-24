@@ -204,7 +204,7 @@ func (s *Service) Upload(ctx context.Context, actor workflow.Actor, in UploadInp
 		cleanup()
 		return nil, apperr.Validation("The file is empty")
 	}
-	if err := checkFile(tmpName, ext); err != nil {
+	if err := CheckFile(tmpName, ext); err != nil {
 		cleanup()
 		return nil, err
 	}
@@ -256,8 +256,8 @@ func (s *Service) Upload(ctx context.Context, actor workflow.Actor, in UploadInp
 	return a, nil
 }
 
-// checkFile verifies the real content type of the stored temp file.
-func checkFile(path, ext string) error {
+// CheckFile verifies the real content type of the stored temp file.
+func CheckFile(path, ext string) error {
 	f, err := os.Open(path)
 	if err != nil {
 		return err

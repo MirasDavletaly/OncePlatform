@@ -61,9 +61,10 @@ services:
     volumes:
       - uploads:/data/uploads
     ports:
-      # Optional access from the local network: http://<NAS-IP>:8080.
-      # Set HTTP_PORT_BIND=127.0.0.1:8080 in .env to allow access only via Tailscale.
-      - "${HTTP_PORT_BIND:-8080}:8080"
+      # Tailscale reaches the app over the Docker network; this port is only for
+      # the NAS itself. HTTP_PORT_BIND=8080 in .env opens plain-HTTP access from
+      # the whole local network (http://<NAS-IP>:8080) - not recommended.
+      - "${HTTP_PORT_BIND:-127.0.0.1:8080}:8080"
     logging: *logging
 
   tailscale:

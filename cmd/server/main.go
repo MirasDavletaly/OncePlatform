@@ -26,6 +26,7 @@ import (
 
 	"onceplatform/internal/auth"
 	"onceplatform/internal/config"
+	"onceplatform/internal/cv"
 	"onceplatform/internal/db"
 	"onceplatform/internal/files"
 	"onceplatform/internal/httpapi"
@@ -107,6 +108,11 @@ func serve() error {
 	if err != nil {
 		return err
 	}
+	cvSvc, err := cv.NewService(pool, log, cfg.StoragePath, cfg.UploadMaxBytes(), cfg.Location,
+		&cv.Engine{Node: cfg.NodeBin, Dir: cfg.CVEngineDir})
+	if err != nil {
+		return err
+	}
 	oauthSrv := oauth.NewServer(pool, log, cfg, authSvc)
 
 	if cfg.SeedDemo {
@@ -118,15 +124,16 @@ func serve() error {
 
 	mcpHandler := mcp.NewHandler(mcp.Deps{
 		Cfg: cfg, Log: log, Version: version, Auth: authSvc, OAuth: oauthSrv, Tickets: ticketSvc,
-		Files: fileSvc, Search: searchSvc,
+		Files: fileSvc, CV: cvSvc, Search: searchSvc,
 	})
 	router := httpapi.NewRouter(httpapi.Deps{
 		Cfg: cfg, Log: log, Pool: pool, Version: version, Auth: authSvc, OAuth: oauthSrv, Tickets: ticketSvc,
-		Files: fileSvc, Search: searchSvc, Notify: notifySvc,
+		Files: fileSvc, CV: cvSvc, Search: searchSvc, Notify: notifySvc,
 		MCP: mcpHandler, Web: webui.FS(),
 	})
 
 	go fileSvc.RunExtractor(ctx, 2)
+	go cvSvc.Run(ctx)
 	go notifySvc.Run(ctx)
 	go maintenance(ctx, log, authSvc, oauthSrv)
 

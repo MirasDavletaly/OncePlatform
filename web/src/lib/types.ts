@@ -1,4 +1,5 @@
-export type Role = 'admin' | 'coordinator' | 'analyst'
+/** recruiter: the CV database only (adds and edits CVs), no tasks */
+export type Role = 'admin' | 'coordinator' | 'analyst' | 'recruiter'
 export type Status = 'new' | 'analysis' | 'solution' | 'sent' | 'closed'
 export type CloseResult = 'won' | 'lost' | 'cancelled' | 'no_bid'
 export type Permission =
@@ -11,6 +12,9 @@ export type Permission =
   | 'admin.users'
   | 'admin.audit'
   | 'admin.oauth_clients'
+  | 'cv.view'
+  | 'cv.manage'
+  | 'cv.delete'
 
 export interface User {
   id: string
@@ -23,6 +27,9 @@ export interface User {
   last_login_at: string | null
   created_at: string
   updated_at: string
+  /** a one-time code was issued and not used yet */
+  invite_pending?: boolean
+  invite_expires_at?: string | null
 }
 
 export interface Me {
@@ -233,6 +240,188 @@ export interface Grant {
   authorized_at: string
   last_used_at: string | null
   active_tokens: number
+}
+
+// ---------------------------------------------------------------------------
+// CV section
+// ---------------------------------------------------------------------------
+
+export interface CvJob {
+  name: string | null
+  position: string | null
+  startDate: string | null
+  endDate: string | null
+  summary?: string
+  prof?: string | null
+  approx?: string
+  /** country code (KZ) and city id (astana) or a city typed by hand; inferred = from a Kazakh legal form only */
+  location?: CvPlace | null
+}
+
+export interface CvPlace {
+  country: string | null
+  city?: string | null
+  inferred?: boolean
+}
+
+export interface CvProject {
+  name: string
+  role: string | null
+  customer: string | null
+  startDate: string | null
+  endDate: string | null
+  summary?: string
+}
+
+export interface CvProfile {
+  basics: {
+    name?: string | null
+    label: string | null
+    summary?: string | null
+    email?: string | null
+    phone?: string | null
+    location: { city: string | null; cityId?: number | null; country?: string | null }
+  }
+  work: CvJob[]
+  projects?: CvProject[]
+  /** doc: the attached diploma or certificate that confirms the entry; fromDoc: the entry comes from it only */
+  education: { institution: string; area: string | null; endDate: string | null; degree?: string | null; doc?: string; fromDoc?: boolean }[]
+  skills: { name: string }[]
+  languages: { language: string; fluency: string | null }[]
+  certificates: { name: string; date: string | null; issuer?: string | null; doc?: string; fromDoc?: boolean }[]
+  meta: {
+    lang?: string
+    totalMonths?: number
+    totalYears?: number
+    title?: { prof: string | null; approx?: string } | null
+    sensitiveDetected?: string[]
+    /** a profession of the taxonomy (prof) or a job title the candidate held (title) */
+    positions?: { prof?: string; title?: string; level: 'junior' | 'middle' | 'senior'; years: number; skillMatch?: number }[]
+    countries?: { country: string; years: number }[]
+  }
+}
+
+export interface Candidate {
+  id: string
+  number: number
+  code: string
+  full_name?: string
+  file_name?: string
+  mime?: string
+  size?: number
+  status: 'pending' | 'ready' | 'failed'
+  error?: string
+  ocr: boolean
+  profile: CvProfile | null
+  consent_date: string
+  consent_note?: string
+  has_consent_file: boolean
+  uploaded_by_name: string
+  created_at: string
+  updated_at: string
+  anonymized: boolean
+  documents?: CvDocument[]
+  /** who recommended the candidate (cv.manage only) */
+  referred_by?: string
+  /** Claude's up-to-date translations of the profile's texts per interface language, keyed like "work.0.position" */
+  translations?: Record<string, Record<string, string>>
+  translation_status: Record<string, 'ok' | 'outdated' | 'missing'>
+}
+
+/** What the engine read from a diploma or certificate. */
+export interface CvDocInfo {
+  /** id: a visa, a passport or an identity card - kept as a file, never entered into the profile */
+  kind: 'diploma' | 'certificate' | 'id'
+  holder: string | null
+  title: string | null
+  issuer: string | null
+  date: string | null
+  expires: string | null
+  number: string | null
+  institution?: string | null
+  area?: string | null
+  degree?: string | null
+  /** candidates whose names the document has (hits = name words found) */
+  suggestions?: { id: string; hits: number }[]
+  matched_by?: 'holder' | 'text'
+}
+
+export interface CvDocument {
+  id: string
+  candidate_id?: string
+  candidate_code?: string
+  candidate_name?: string
+  file_name: string
+  mime: string
+  size: number
+  status: 'pending' | 'ready' | 'failed'
+  error?: string
+  ocr: boolean
+  info: CvDocInfo | null
+  assigned?: 'auto' | 'manual'
+  uploaded_by_name: string
+  created_at: string
+  delete_after?: string
+}
+
+export interface CvMeta {
+  professions: { id: string; en: string; ru: string }[]
+  skills: string[]
+  languages: string[]
+  levels: string[]
+  degrees: string[]
+  countries: { code: string; en: string; ru: string }[]
+  cities: { id: string; country: string; en: string; ru: string }[]
+}
+
+export interface CvLang {
+  language: string
+  level?: string
+}
+
+export interface CvRole {
+  title: string
+  profession?: string
+  count?: number
+  min_years?: number
+  skills_must?: string[]
+  skills_nice?: string[]
+  certificates?: string[]
+  languages?: CvLang[]
+  notes?: string
+}
+
+export interface CvWhy {
+  mustMet: string[]
+  mustMissing: string[]
+  niceMet: string[]
+  niceMissing: string[]
+  certMet: string[]
+  certMissing: string[]
+  years: number
+  totalYears: number
+  minYears: number
+  profession: string | null
+  titleMatch: number | null
+  titleApprox: boolean
+  languages: { language: string; need: string | null; have: string | null; inferred: boolean; listed: boolean; ok: boolean }[]
+}
+
+export interface CvMatchRow {
+  candidate_id: string
+  code: string
+  name?: string
+  label?: string
+  score: number
+  fails: string[]
+  parts: Record<string, number>
+  why: CvWhy
+}
+
+export interface TicketCv {
+  requirements: { roles: CvRole[]; updated_by_name?: string; via?: string; updated_at: string | null }
+  matches: { role: CvRole; results: CvMatchRow[] }[]
+  candidates_total: number
 }
 
 export interface OAuthClient {

@@ -13,6 +13,7 @@ import (
 
 	"onceplatform/internal/auth"
 	"onceplatform/internal/config"
+	"onceplatform/internal/cv"
 	"onceplatform/internal/files"
 	"onceplatform/internal/notify"
 	"onceplatform/internal/oauth"
@@ -30,6 +31,7 @@ type Deps struct {
 	OAuth   *oauth.Server
 	Tickets *tickets.Service
 	Files   *files.Service
+	CV      *cv.Service
 	Search  *search.Service
 	Notify  *notify.Service
 	MCP     http.Handler
@@ -45,6 +47,7 @@ type api struct {
 	oauth   *oauth.Server
 	tickets *tickets.Service
 	files   *files.Service
+	cv      *cv.Service
 	search  *search.Service
 	notify  *notify.Service
 }
@@ -53,7 +56,7 @@ type api struct {
 func NewRouter(d Deps) http.Handler {
 	a := &api{
 		cfg: d.Cfg, log: d.Log, pool: d.Pool, version: d.Version, auth: d.Auth, oauth: d.OAuth,
-		tickets: d.Tickets, files: d.Files, search: d.Search, notify: d.Notify,
+		tickets: d.Tickets, files: d.Files, cv: d.CV, search: d.Search, notify: d.Notify,
 	}
 	r := chi.NewRouter()
 	r.Use(middleware.RequestID)
@@ -95,14 +98,20 @@ func NewRouter(d Deps) http.Handler {
 		r.Use(a.csrfProtect)
 
 		r.Post("/auth/login", a.login)
+		r.Post("/auth/activate", a.activate)
+		r.Get("/auth/register", a.registrationOpen)
+		r.Post("/auth/register", a.register)
 		r.Get("/auth/csrf", a.csrf)
+		r.Get("/auth/me", a.me)
 		r.Get("/meta", a.meta)
 
 		r.Group(func(r chi.Router) {
 			r.Use(requireUser)
+			r.Use(cvOnly)
 			a.authRoutes(r)
 			a.ticketRoutes(r)
 			a.fileRoutes(r)
+			a.cvRoutes(r)
 			a.miscRoutes(r)
 		})
 

@@ -19,8 +19,9 @@ import { SolutionTab } from './SolutionTab'
 import { FilesTab } from './FilesTab'
 import { CommentsTab } from './CommentsTab'
 import { HistoryTab } from './HistoryTab'
+import { CandidatesTab } from './CandidatesTab'
 
-type Tab = 'description' | 'solution' | 'files' | 'comments' | 'history'
+type Tab = 'description' | 'solution' | 'files' | 'candidates' | 'comments' | 'history'
 
 function Row({ label, children }: { label: string; children: ReactNode }) {
   return (
@@ -144,6 +145,7 @@ export function TicketPage() {
               { id: 'description', label: t.ticket.tabs.description },
               { id: 'solution', label: t.ticket.tabs.solution },
               { id: 'files', label: t.ticket.tabs.files, count: tk.attachments_count },
+              ...(can('cv.view') ? [{ id: 'candidates' as const, label: t.ticket.tabs.candidates }] : []),
               { id: 'comments', label: t.ticket.tabs.comments, count: tk.comments_count },
               { id: 'history', label: t.ticket.tabs.history },
             ]}
@@ -152,6 +154,7 @@ export function TicketPage() {
             {tab === 'description' && <DescriptionTab ticket={tk} />}
             {tab === 'solution' && <SolutionTab ticket={tk} />}
             {tab === 'files' && <FilesTab ticket={tk} />}
+            {tab === 'candidates' && can('cv.view') && <CandidatesTab ticket={tk} />}
             {tab === 'comments' && <CommentsTab ticket={tk} />}
             {tab === 'history' && <HistoryTab ticket={tk} />}
           </div>

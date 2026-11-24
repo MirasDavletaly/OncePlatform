@@ -1,6 +1,6 @@
 import { ShortlistSummary } from '../components/Shortlist'
 import { submissionPending } from '../lib/shortlist'
-import { useMemo, useState, type ReactNode } from 'react'
+import { useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { Link, useSearchParams } from 'react-router'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import {
@@ -102,8 +102,26 @@ function DraggableCard({ tk }: { tk: Ticket }) {
   )
 }
 
+// A column shows up to this many cards; the rest scroll inside the column.
+const VISIBLE_CARDS = 10
+
 function DropColumn({ col, children }: { col: Column; children: ReactNode }) {
   const { setNodeRef, isOver } = useDroppable({ id: col.status })
+  const list = useRef<HTMLDivElement>(null)
+  const [maxHeight, setMaxHeight] = useState<number>()
+  // Cards differ in height, so the limit is the bottom of the 10th card (+ the list's bottom padding).
+  useLayoutEffect(() => {
+    const el = list.current
+    if (!el) return
+    const measure = () => {
+      const last = el.children[VISIBLE_CARDS - 1] as HTMLElement | undefined
+      setMaxHeight(el.children.length > VISIBLE_CARDS && last ? last.offsetTop + last.offsetHeight + 12 : undefined)
+    }
+    measure()
+    const ro = new ResizeObserver(measure)
+    ro.observe(el)
+    return () => ro.disconnect()
+  }, [col.items])
   return (
     <section
       ref={setNodeRef}
@@ -118,7 +136,13 @@ function DropColumn({ col, children }: { col: Column; children: ReactNode }) {
         <h2 className="text-[13px] font-semibold">{t.status[col.status]}</h2>
         <span className="num ml-auto rounded-full bg-surface px-2 text-[12px] text-muted ring-1 ring-line">{col.total}</span>
       </header>
-      <div className="flex min-h-24 flex-1 flex-col gap-2 px-2 pb-3">{children}</div>
+      <div
+        ref={list}
+        style={{ maxHeight }}
+        className={cn('relative flex min-h-24 flex-1 flex-col gap-2 px-2 pb-3', maxHeight !== undefined && 'scroll-thin overflow-y-auto')}
+      >
+        {children}
+      </div>
     </section>
   )
 }
