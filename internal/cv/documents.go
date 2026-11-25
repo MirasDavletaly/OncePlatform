@@ -123,6 +123,9 @@ func (s *Service) UploadDocument(ctx context.Context, actor workflow.Actor, file
 	if name == "" || !ok || !cvExt[ext] {
 		return nil, apperr.New(415, "unsupported_file", "A document must be a PDF, DOCX, TXT, PNG or JPG file")
 	}
+	if err := s.checkQuota(ctx, actor); err != nil {
+		return nil, err
+	}
 	id, err := db.NewUUID()
 	if err != nil {
 		return nil, err
@@ -211,9 +214,10 @@ func (s *Service) ReprocessDocument(ctx context.Context, actor workflow.Actor, i
 	return s.getDocument(ctx, s.pool, id)
 }
 
-// DeleteDocument removes the document (row and file) and its marks in the profile.
+// DeleteDocument removes the document (row and file) and its marks in the
+// profile - for good, so only roles that may delete candidates may do it.
 func (s *Service) DeleteDocument(ctx context.Context, actor workflow.Actor, id string) error {
-	if err := actor.Require(workflow.PermCVManage); err != nil {
+	if err := actor.Require(workflow.PermCVDelete); err != nil {
 		return err
 	}
 	d, err := s.getDocument(ctx, s.pool, id)
@@ -284,6 +288,9 @@ func (s *Service) processDocument(ctx context.Context, id string) {
 		Scan(&stored, &name); err != nil {
 		return // already processed or deleted
 	}
+	if !s.claim(ctx, "candidate_documents", id) {
+		return
+	}
 	text, ocr, err := extractCV(ctx, s.tmp, s.pathFor(stored), files.Ext(name))
 	if err == nil && letters(text) == 0 {
 		err = errors.New("no text was found in the file")
@@ -296,7 +303,8 @@ func (s *Service) processDocument(ctx context.Context, id string) {
 		}
 	}
 	if ctx.Err() != nil {
-		return // shutting down: stays pending
+		s.unclaim("candidate_documents", id) // shutting down: stays pending
+		return
 	}
 	if err != nil {
 		msg := truncate(err.Error(), 500)
@@ -371,8 +379,10 @@ func (s *Service) saveReading(ctx context.Context, id string, r *docReading, rec
 // rematchDocuments looks the holders of the unassigned documents up again
 // after a new CV was parsed (documents uploaded before their CV).
 func (s *Service) rematchDocuments(ctx context.Context) {
+	// the 50 newest: every CV parse waits for this, and a pile of junk "diplomas" must not stall the CV queue
+	// (unassigned documents expire after 30 days anyway)
 	rows, err := s.pool.Query(ctx, `SELECT id, doc_text FROM candidate_documents
-		WHERE candidate_id IS NULL AND status = 'ready' AND doc_text IS NOT NULL ORDER BY created_at`)
+		WHERE candidate_id IS NULL AND status = 'ready' AND doc_text IS NOT NULL ORDER BY created_at DESC LIMIT 50`)
 	if err != nil {
 		return
 	}

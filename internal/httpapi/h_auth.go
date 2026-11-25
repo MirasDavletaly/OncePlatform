@@ -15,6 +15,7 @@ import (
 
 func (a *api) authRoutes(r chi.Router) {
 	r.Post("/auth/logout", a.logout)
+	r.Post("/auth/logout-others", a.logoutOthers)
 	r.Patch("/auth/me", a.updateMe)
 	r.Post("/auth/password", a.changePassword)
 
@@ -68,7 +69,17 @@ func (a *api) logout(w http.ResponseWriter, r *http.Request) {
 	}
 	auth.ClearSessionCookie(w, r)
 	auth.SetCSRFCookie(w, r, a.auth.CSRF.Issue(auth.AnonymousBinding))
+	w.Header().Set("Clear-Site-Data", `"cache"`) // nothing of the session stays in this browser's cache
 	w.WriteHeader(http.StatusNoContent)
+}
+
+func (a *api) logoutOthers(w http.ResponseWriter, r *http.Request) {
+	n, err := a.auth.LogoutOthers(r.Context(), actor(r), principal(r).SessionID)
+	if err != nil {
+		a.writeError(w, r, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]int64{"ended": n})
 }
 
 // me is public: an anonymous visitor gets 200 with "user": null rather than
@@ -122,9 +133,13 @@ func (a *api) changePassword(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *api) meta(w http.ResponseWriter, r *http.Request) {
+	version := "" // the build is nobody's business before signing in
+	if principal(r) != nil {
+		version = a.version
+	}
 	writeJSON(w, http.StatusOK, map[string]any{
 		"app_name":           "OncePlatform",
-		"version":            a.version,
+		"version":            version,
 		"base_url":           a.cfg.BaseURL,
 		"mcp_url":            a.cfg.MCPResourceURL(),
 		"https":              a.cfg.HTTPS(),
@@ -154,8 +169,9 @@ func (a *api) listUsers(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if !act.Can(workflow.PermUsersManage) {
+		// colleagues see who is who (names for assignees and mentions), not contacts or account state
 		for i := range users {
-			users[i].LastLoginAt = nil
+			users[i].LastLoginAt, users[i].Email, users[i].InvitePending, users[i].InviteExpiresAt = nil, "", false, nil
 		}
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"items": users})

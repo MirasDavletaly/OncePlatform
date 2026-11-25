@@ -132,10 +132,17 @@ func parseTranslations(raw []byte) map[string]translation {
 	return m
 }
 
+// sourceHash identifies the texts Claude translated: the anonymised ones. A
+// change in what the anonymiser masks outdates the translation too, so an old
+// translation can never show a name the anonymised view now hides.
+func sourceHash(profile json.RawMessage, fullName string) string {
+	return textsHash(ProfileTexts(anonymizeProfile(profile, fullName)))
+}
+
 // translationState tells, per interface language, the translation made from
 // the profile's current texts ("ok", with its texts), an outdated one or none.
-func translationState(raw []byte, profile json.RawMessage) (map[string]map[string]string, map[string]string) {
-	current := textsHash(ProfileTexts(profile))
+func translationState(raw []byte, profile json.RawMessage, fullName string) (map[string]map[string]string, map[string]string) {
+	current := sourceHash(profile, fullName)
 	valid := map[string]map[string]string{}
 	status := map[string]string{}
 	saved := parseTranslations(raw)
@@ -243,7 +250,7 @@ func (s *Service) SaveTranslation(ctx context.Context, actor workflow.Actor, ref
 	if len(clean) == 0 {
 		return nil, 0, apperr.Validation("No translated texts were sent")
 	}
-	t, _ := json.Marshal(translation{Source: textsHash(source), Texts: clean, At: time.Now().UTC()})
+	t, _ := json.Marshal(translation{Source: sourceHash(real.Profile, real.FullName), Texts: clean, At: time.Now().UTC()})
 	if _, err := s.pool.Exec(ctx, `UPDATE candidates SET translations = jsonb_set(coalesce(translations, '{}'), ARRAY[$2::text], $3::jsonb)
 		WHERE id = $1`, c.ID, lang, t); err != nil {
 		return nil, 0, err

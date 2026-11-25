@@ -32,7 +32,9 @@ RUN go build -ldflags="-s -w -X main.version=${VERSION}" -o /out/portal ./cmd/se
 #    for the CV engine, Tesseract OCR (kaz+rus+eng) for scanned CVs, non-root user
 # ---------------------------------------------------------------------------
 FROM alpine:3.24
-RUN apk add --no-cache poppler-utils ca-certificates tzdata nodejs \
+# apk upgrade: the packages that parse uploads (poppler, tesseract) get their fixes even when this layer is rebuilt
+# from a cached base image
+RUN apk upgrade --no-cache && apk add --no-cache poppler-utils ca-certificates tzdata nodejs \
       tesseract-ocr tesseract-ocr-data-rus tesseract-ocr-data-eng \
  && addgroup -S -g 10001 app \
  && adduser -S -D -H -u 10001 -G app app \

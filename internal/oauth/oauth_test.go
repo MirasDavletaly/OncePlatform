@@ -36,7 +36,7 @@ func TestPKCE(t *testing.T) {
 func TestValidateRedirectURI(t *testing.T) {
 	good := []string{
 		"https://claude.ai/api/mcp/auth_callback",
-		"https://example.com/cb?x=1",
+		"https://claude.com/api/mcp/auth_callback",
 		"http://localhost:33418/callback",
 		"http://127.0.0.1:6274/oauth/callback",
 		"http://[::1]:8080/cb",
@@ -49,6 +49,8 @@ func TestValidateRedirectURI(t *testing.T) {
 	bad := []string{
 		"", "http://evil.com/cb", "javascript:alert(1)", "claude://callback", "/relative",
 		"https://example.com/cb#frag", "https://user:pass@example.com/cb", "ftp://example.com",
+		// any other host, a look-alike with a Cyrillic "с", a subdomain trick
+		"https://example.com/cb?x=1", "https://сlaude.ai/api/mcp/auth_callback", "https://claude.ai.evil.com/cb",
 	}
 	for _, u := range bad {
 		if err := ValidateRedirectURI(u); err == nil {

@@ -85,6 +85,7 @@ function AssignControl({ d, candidates, label }: { d: CvDocument; candidates: Ca
 }
 
 function DeleteDoc({ d }: { d: CvDocument }) {
+  const { can } = useSession()
   const qc = useQueryClient()
   const toast = useToast()
   const confirm = useConfirm()
@@ -98,6 +99,7 @@ function DeleteDoc({ d }: { d: CvDocument }) {
     },
     onError: (e) => toast(errorMessage(e), 'error'),
   })
+  if (!can('cv.delete')) return null // deleting is for good: administrators and coordinators
   return (
     <IconButton
       label={t.common.delete}

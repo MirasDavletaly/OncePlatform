@@ -169,7 +169,16 @@ func Activity(ctx context.Context, q db.Querier, limit int) ([]Record, error) {
 	if err != nil {
 		return nil, err
 	}
-	return scanRecords(rows)
+	return withoutIP(scanRecords(rows))
+}
+
+// withoutIP: the feed and a task's history are shown to the whole team;
+// colleagues' addresses are for the administrator's audit log only.
+func withoutIP(recs []Record, err error) ([]Record, error) {
+	for i := range recs {
+		recs[i].IP = ""
+	}
+	return recs, err
 }
 
 // ForTicket returns all audit records related to a ticket, oldest first.
@@ -180,7 +189,7 @@ func ForTicket(ctx context.Context, q db.Querier, ticketID string) ([]Record, er
 	if err != nil {
 		return nil, err
 	}
-	return scanRecords(rows)
+	return withoutIP(scanRecords(rows))
 }
 
 func normalizePage(page, size int) (int, int) {

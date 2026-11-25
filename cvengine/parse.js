@@ -52,11 +52,12 @@ export function fixOcr(text, protect) {
 
 // ------------------------------------------------------------------ словари разметки
 const HEAD = {
-  exp: ['Опыт работы', 'Профессиональный опыт', 'Трудовая деятельность', 'Места работы', 'Жұмыс тәжірибесі', 'Тәжірибе', 'Кәсіби тәжірибе', 'Еңбек жолы', 'Experience', 'Work experience', 'Professional experience', 'Employment history'],
+  exp: ['Опыт работы', 'Профессиональный опыт', 'Трудовая деятельность', 'Места работы', 'Жұмыс тәжірибесі', 'Тәжірибе', 'Кәсіби тәжірибе', 'Еңбек жолы', 'Experience', 'Work experience', 'Professional experience', 'Employment history',
+    'Профессиональный путь', 'Трудовой путь', 'Руководящая деятельность'],
   edu: ['Образование', 'Білімі', 'Білім', 'Education'],
   skills: ['Навыки', 'Ключевые навыки', 'Профессиональные навыки', 'Технические навыки', 'Стек технологий', 'Дағдылар', 'Кәсіби дағдылар', 'Негізгі дағдылар', 'Skills', 'Key skills', 'Technical skills', 'Professional skills', 'Core skills', 'Tech stack',
     'Skills & Expertise', 'Skills and Expertise', 'Core Competencies', 'Key Competencies', 'Areas of Expertise', 'Компетенции', 'Ключевые компетенции',
-    'Сводка навыков', 'Summary of Skills', 'Skills Summary'],
+    'Сводка навыков', 'Summary of Skills', 'Skills Summary', 'Профессиональные компетенции', 'Основные профессиональные компетенции'],
   langs: ['Языки', 'Знание языков', 'Владение языками', 'Иностранные языки', 'Тілдер', 'Тілдерді білуі', 'Тіл білу', 'Languages', 'Language skills'],
   certs: ['Сертификаты', 'Курсы и сертификаты', 'Повышение квалификации', 'Повышение квалификации, курсы', 'Курсы', 'Сертификаттар', 'Курстар', 'Certifications', 'Certificates', 'Courses and certificates', 'Licenses and certifications',
     'Training', 'Trainings', 'Training & Certifications', 'Certifications & Training', 'Professional Training', 'Courses', 'Licenses', 'Тренинги'],
@@ -65,7 +66,8 @@ const HEAD = {
     'Hobbies', 'Interests', 'Хобби', 'Интересы', 'References', 'Additional information', 'Дополнительная информация', 'Personal information',
     'Personal details', 'Личные данные', 'Личная информация'],
   // OncePlatform: краткое описание кандидата (раньше заголовок «Professional Summary» становился именем или должностью)
-  summary: ['Professional Summary', 'Summary', 'Career Summary', 'Executive Summary', 'Profile', 'Professional Profile', 'About me', 'About', 'Objective', 'Career Objective', 'О себе', 'Обо мне', 'Кратко о себе', 'Профиль', 'Цель', 'Краткая информация', 'Өзім туралы', 'Кәсіби профиль'],
+  summary: ['Professional Summary', 'Summary', 'Career Summary', 'Executive Summary', 'Profile', 'Professional Profile', 'About me', 'About', 'Objective', 'Career Objective', 'О себе', 'Обо мне', 'Кратко о себе', 'Профиль', 'Цель', 'Краткая информация', 'Өзім туралы', 'Кәсіби профиль',
+    'Профессиональный профиль', 'Профессиональная цель'],
   // OncePlatform: проекты, которые вел кандидат (раньше их строки попадали в предыдущий раздел)
   projects: ['Проекты', 'Ключевые проекты', 'Реализованные проекты', 'Основные проекты', 'Опыт участия в проектах', 'Проектный опыт', 'Участие в проектах', 'Жобалар', 'Жобалық тәжірибе', 'Негізгі жобалар', 'Projects', 'Key projects', 'Project experience', 'Selected projects'],
 };
@@ -79,8 +81,11 @@ const HEAD_DUR = new RegExp(`\\s*(?:[-\\u2013\\u2014:,]\\s*|\\(\\s*)${DUR}\\s*\\
 // кэш: заголовки и должности повторяются от резюме к резюме
 const memo = (fn, size = 6000) => { const m = new Map(); return (x) => { if (m.has(x)) return m.get(x); const v = fn(x); if (m.size > size) m.clear(); m.set(x, v); return v; }; };
 export const headingOf = memo((line) => {
-  const s = line.replace(HEAD_DUR, '').replace(/[:.\s]+$/, '').trim();
-  if (!s || s.length > 34 || /\d|@/.test(s) || s.split(/\s+/).length > 4) return null;
+  // a heading is short; on a long line the trailing-run regexes below backtrack quadratically
+  if (line.length > 100) return null;
+  // OncePlatform: numbered headings - «5. ПРОФЕССИОНАЛЬНЫЙ ПУТЬ», «II. Education»
+  const s = line.replace(/^(?:\d{1,2}|[IVX]{1,4})[.)]\s+/, '').replace(HEAD_DUR, '').replace(/[:.\s]+$/, '').trim();
+  if (!s || s.length > 40 || /\d|@/.test(s) || s.split(/\s+/).length > 4) return null;
   const f = fold(s);
   let best = null;
   for (const [k, h] of HEAD_LIST) {
@@ -111,9 +116,14 @@ const labelOf = (line) => {
 
 // «Мужчина, 35 лет, родился 17 апреля 1991» (hh.ru): пол и возраст строкой без подписи
 const GENDER_LINE = /^(?:мужчина|женщина|male|female|ер|әйел)\s*,\s*\d{1,2}\s*(?:лет|год|года|жас|жаста|years?)(?![\p{L}])/iu;
-// «Желаемая должность и зарплата» (hh.ru): должность - в следующей строке
-const WANTED = /^(?:желаемая должность|desired (?:position|job)|қалаған лауазым)/iu;
-export const isSensitiveLine = (l) => { const lb = labelOf(l); return (!!lb && ['birth', 'gender', 'marital', 'nat'].includes(lb.k)) || GENDER_LINE.test(l); };
+// OncePlatform: «1980 г.р.», «12.03.1985 года рождения» и «Женат.» строкой без подписи
+const BIRTH_LINE = /^(?:\d{1,2}\.\d{1,2}\.)?(?:19|20)\d{2}\s*(?:г\.?\s*р\.?|года?\s+рождения|ж\.\s*т\.?)$/iu;
+const MARITAL_LINE = /^(?:женат|замужем|холост|не\s+женат|не\s+замужем|разведена?|married|single|divorced)\.?$/iu;
+// «Желаемая должность и зарплата» (hh.ru), OncePlatform: «Специализация:» - должность в следующей строке
+const WANTED = /^(?:желаемая должность|desired (?:position|job)|қалаған лауазым|специализация|speciali[sz]ation)/iu;
+// OncePlatform: заголовок документа над именем - не имя и не должность
+const DOC_TITLE = /^(?:персональное\s+портфолио|портфолио|резюме|түйіндеме|curriculum\s+vitae|cv|resume|résumé|personal\s+portfolio)$/iu;
+export const isSensitiveLine = (l) => { const lb = labelOf(l); return (!!lb && ['birth', 'gender', 'marital', 'nat'].includes(lb.k)) || GENDER_LINE.test(l) || BIRTH_LINE.test(l) || MARITAL_LINE.test(l); };
 
 const MONTHS = {
   ru: ['январь', 'февраль', 'март', 'апрель', 'май', 'июнь', 'июль', 'август', 'сентябрь', 'октябрь', 'ноябрь', 'декабрь'],
@@ -188,9 +198,11 @@ export function parseDate(s0, end = false) {
 
 // организация: ТОО «…», ЖШС «…», «…» ЖШС, … LLP, АО «…»
 const COMPANY = [
-  /(?:ТОО|АО|ИП|ГУ|РГП|ЖШС|АҚ|ЖК)\s*[«"]([^»"]+)[»"]/u,
-  /[«"]([^»"]+)[»"]\s*(?:ЖШС|АҚ|ЖК)/u,
-  /([A-Z][\w'&.-]*(?:\s[A-Z][\w'&.-]*){0,4})\s+(?:LLP|LLC|JSC|Ltd\.?|Inc\.?)(?![\p{L}])/u,
+  // bounded runs and a word start: on a CV line of thousands of «"» or capitals the unbounded forms backtracked for
+  // seconds (the text comes from whoever uploads the file)
+  /(?:ТОО|АО|ИП|ГУ|РГП|ЖШС|АҚ|ЖК)(?:\s+СП)?\s*[«"]([^»"«\n]{1,150})[»"]/u, // OncePlatform: «ТОО СП «…»» (совместное предприятие)
+  /[«"]([^»"«\n]{1,150})[»"]\s*(?:ЖШС|АҚ|ЖК)/u,
+  /(?<![\w'&.-])([A-Z][\w'&.-]{0,40}(?:\s[A-Z][\w'&.-]{0,40}){0,4})\s+(?:LLP|LLC|JSC|Ltd\.?|Inc\.?)(?![\p{L}])/u,
 ];
 const splitCompany = (s) => {
   for (const re of COMPANY) {
@@ -434,7 +446,9 @@ export function relevantMonths(work, prof, near = 0.5) {
 }
 
 // ------------------------------------------------------------------ основной разбор
-const EMAIL = /[\p{L}\d._%+-]+@[\p{L}\d.-]+\.[a-z]{2,}/iu;
+// bounded parts and a start that is no letter of the address: run over the whole text, the unbounded form took 34 s
+// on 160 000 letters in a row
+const EMAIL = /(?<![\p{L}\d._%+-])[\p{L}\d._%+-]{1,64}@[\p{L}\d-]{1,63}(?:\.[\p{L}\d-]{1,63}){0,8}\.[a-z]{2,24}/iu;
 const PHONE = /(?:\+?\s?[78])[\s(-]*(\d{3})[\s)-]*(\d{3})[\s-]*(\d{2})[\s-]*(\d{2})(?!\d)/;
 
 export function detectLang(text) {
@@ -452,6 +466,14 @@ const CUST_L = /^(?:заказчик|клиент|тапсырыс\s+беруш�
 const NAME_L = /^(?:проект|название(?:\s+проекта)?|жоба|project(?:\s+name)?)\s*[:-]\s*(.+)$/iu;
 const YEAR_TAIL = /\s*\((?:[^)]*?\s)?((?:19|20)\d{2})\)\s*$/;
 const clean = (l) => l.replace(BULLET, '').trim();
+// paragraphs of a project list without periods (a line in lower case goes on), when at least two of them are a name
+// followed by its description: «ТЭЦ-2» / «Наблюдения за осадками …» / «… оборудования.»; otherwise null
+const namedProjects = (pl) => {
+  const ps = [];
+  for (const l of pl) if (ps.length && !BULLET.test(l) && /^\p{Ll}/u.test(l)) ps[ps.length - 1] += ` ${l}`; else ps.push(l);
+  const end = (x) => /[.;]$/.test(x || '');
+  return ps.filter((x, i) => !end(x) && !BULLET.test(x) && !NAME_L.test(x) && end(ps[i + 1])).length >= 2 ? ps : null;
+};
 export function parseProjects(pl) {
   const out = [];
   const nameBefore = pl.length > 1 && !RANGE.test(pl[0]) && RANGE.test(pl[1]);
@@ -479,6 +501,14 @@ export function parseProjects(pl) {
       if (fields(cur, l)) continue;
       if (!cur.name) cur.name = clean(l); else cur.summary.push(clean(l));
     }
+  } else if (namedProjects(pl)) {
+    // OncePlatform: the name of a project without a full stop and its description under it ending with one; text
+    // before the first name is an introduction
+    for (const x of namedProjects(pl)) {
+      if (/[.;]$/.test(x)) { cur?.summary.push(x); continue; }
+      cur = { name: clean(x.replace(YEAR_TAIL, '')), role: null, customer: null, startDate: null, endDate: null, summary: [] };
+      out.push(cur);
+    }
   } else {
     for (const l of pl) {
       if (cur && fields(cur, l)) continue;
@@ -494,7 +524,7 @@ export function parseProjects(pl) {
 // текст строки периода без периода, стажа, пустых скобок и вложенного периода («Engineer (Feb 2013 to July 2020)»)
 const restOf = (l, m = l.match(RANGE)) => {
   if (!m) return '';
-  const r = (l.slice(0, m.index) + l.slice(m.index + m[0].length)).replace(/\(([^)]*)\)/g, (all, x) => (RANGE.test(x) ? ' ' : all)).replace(DUR_ANY, ' ')
+  const r = (l.slice(0, m.index) + l.slice(m.index + m[0].length)).replace(/\(([^()]*)\)/g, (all, x) => (RANGE.test(x) ? ' ' : all)).replace(DUR_ANY, ' ')
     .replace(/\(\s*\)|\(\s*$|^\s*\)/g, ' ').replace(/\s*\|\s*\|?\s*$/, '').replace(/^[\s|,]+|[\s|,]+$/g, '').replace(/\s+/g, ' ').trim();
   return /\p{L}/u.test(r) ? r : '';
 };
@@ -528,6 +558,10 @@ function labelledJobs(ex) {
     if (k - i >= 2 && v > k) {
       for (let j = 0; j < v - k; j += 1) ls.push(`${fieldOf(ex[i + j]).label}: ${ex[k + j]}`);
       i = v - 1;
+    } else if (k - i >= 2) {
+      // a run of labels without values: kept as it is, in one step (line by line it was quadratic)
+      ls.push(...ex.slice(i, k));
+      i = k - 1;
     } else ls.push(ex[i]);
   }
   const recs = [];
@@ -550,6 +584,40 @@ function labelledJobs(ex) {
   }
   return jobs.length >= 2 ? jobs : [];
 }
+
+// OncePlatform: a table of jobs read column by column (pdftotext of a Word or Writer table): all the periods, then all
+// the companies, then all the titles, in blocks per page. Taken only when there are as many companies as periods;
+// titles only when their count agrees too (a line in lower case continues the title above).
+const periodOnly = (l) => { const m = l.match(RANGE); return (!!m && !restOf(l, m)) || START_ONLY.test(l); };
+const START_DATE = new RegExp(DATE_SRC, 'iu');
+function columnJobs(ex) {
+  const first = ex.findIndex((l, i) => periodOnly(l) && periodOnly(ex[i + 1] || ''));
+  if (first < 0) return null;
+  const cell = (l) => periodOnly(l) || (!RANGE.test(l) && !BULLET.test(l) && !/[.;:!?]$/.test(l) && (hasCompany(l) || l.split(/\s+/).length <= 6));
+  let end = first;
+  while (end < ex.length && cell(ex[end])) end += 1;
+  const zone = ex.slice(first, end);
+  const periods = zone.filter(periodOnly);
+  const companies = zone.filter((l) => !periodOnly(l) && hasCompany(l));
+  const titles = [];
+  for (const l of zone) {
+    if (periodOnly(l) || hasCompany(l)) continue;
+    if (titles.length && /^\p{Ll}/u.test(l)) titles[titles.length - 1] += ` ${l}`; else titles.push(l);
+  }
+  if (companies.length !== periods.length) return null;
+  const jobs = periods.map((l, i) => {
+    const m = l.match(RANGE);
+    const endRaw = m ? (m[2] ?? m[3] ?? '').trim() : '';
+    const position = titles.length === periods.length ? titles[i] : null;
+    return mkJob({ company: splitCompany(companies[i]).company, position }, parseDate((m ? m[1] : l.match(START_DATE)[0]).trim()),
+      m && !isPresent(endRaw) ? parseDate(endRaw, true) : null, [], [l, companies[i], position].filter(Boolean));
+  });
+  return { jobs, from: first, to: end };
+}
+// OncePlatform: «С 2023 года — директор ТОО «…»» - место работы с этого года по настоящее время
+const SINCE = /^(?:с|since|from)\s+((?:19|20)\d{2})\s*(?:года|г\.|year)?\s*[—–-]\s*(.+?)\.?$/iu;
+const sinceLine = (l) => { const m = SINCE.exec(l); return m && hasCompany(m[2]) ? `${m[1]} - настоящее время | ${m[2]}` : l; };
+const wordKey = (x) => fold(x).split(/[^\p{L}]+/u).filter(Boolean).sort().join(' ');
 
 export function parseResume(text0, { matcher, protect, ocr = false } = {}) {
   const t0 = typeof performance !== 'undefined' ? performance.now() : Date.now();
@@ -591,25 +659,33 @@ export function parseResume(text0, { matcher, protect, ocr = false } = {}) {
       continue;
     }
     if (GENDER_LINE.test(l)) { const [g, age] = l.split(/\s*,\s*/); out.meta.sensitive.gender = g; out.meta.sensitive.birthDate = age; continue; }
+    if (BIRTH_LINE.test(l)) { out.meta.sensitive.birthDate = l; continue; }
+    if (MARITAL_LINE.test(l)) { out.meta.sensitive.marital = l; continue; }
     if (EMAIL.test(l) || PHONE.test(l)) { if (B.location.cityId == null) { const c = cityOf(l); if (c != null) { B.location.cityId = c; B.location.city = CITIES[c].ru; } } continue; }
     plain.push(l);
   }
   // OncePlatform: инициалы («Aigerim K. Nurlanova»), до четырех слов и «Jr.» в конце; без такой строки - первая строка
-  // одним словом заглавными («IVANPETROV»: пробел потерян в PDF), если это не должность
-  let nameIdx = plain.findIndex((l) => /^[\p{Lu}][\p{L}'-]+(?:\s(?:\p{Lu}\.|[\p{Lu}][\p{L}'-]+)){1,3}(?:,?\s(?:Jr|JR|Sr|SR|II|III|IV)\.?)?$/u.test(l) && !normTitle(l)?.prof);
+  // одним словом заглавными («IVANPETROV»: пробел потерян в PDF), если это не должность. Заголовок документа
+  // («ПЕРСОНАЛЬНОЕ ПОРТФОЛИО») - не имя.
+  let nameIdx = plain.findIndex((l) => /^[\p{Lu}][\p{L}'-]+(?:\s(?:\p{Lu}\.|[\p{Lu}][\p{L}'-]+)){1,3}(?:,?\s(?:Jr|JR|Sr|SR|II|III|IV)\.?)?$/u.test(l) && !normTitle(l)?.prof && !DOC_TITLE.test(l));
   if (nameIdx < 0 && /^\p{Lu}{6,30}$/u.test(plain[0] || '') && !normTitle(plain[0])?.prof && !/^(?:RESUME|CURRICULUM|PROFILE|РЕЗЮМЕ)$|(?:ER|OR|IST|IAN|ANT|MAN|ИК|ЕР|ОР)$/u.test(plain[0])) nameIdx = 0;
   if (nameIdx >= 0) B.name = plain[nameIdx];
   else out.meta.warnings.push('name');
   const wi = plain.findIndex((l) => WANTED.test(l));
   const labelLine = (wi >= 0 && plain[wi + 1]) || plain.find((l, i) => i !== nameIdx && normTitle(l)?.prof) || plain.find((l, i) => i !== nameIdx && !l.includes(':')) || plain.find((l, i) => i !== nameIdx);
-  if (labelLine) { B.label = labelLine; out.meta.title = normTitle(labelLine); }
+  if (labelLine) { B.label = labelLine.replace(BULLET, '').trim(); out.meta.title = normTitle(B.label); }
   if (B.location.cityId == null) { for (const l of headLines) { const c = cityOf(l); if (c != null) { B.location.cityId = c; B.location.city = CITIES[c].ru; break; } } }
   // опыт работы
   // период на двух строках склеивается; строки стажа («4 года 9 месяцев») пропускаются и не становятся
   // ни организацией, ни должностью
-  const ex = joinRanges((sec.exp || []).map((l) => leadRange(monthYears(l)))).filter((l) => !DURATION.test(l));
+  // OncePlatform: contacts and the name again (a signature at the end) are no part of a section
+  const nameKey = B.name && wordKey(B.name);
+  for (const k of Object.keys(sec)) if (k !== 'head') sec[k] = sec[k].filter((l) => !EMAIL.test(l) && !PHONE.test(l) && !/_{4,}/.test(l) && !(nameKey && wordKey(l) === nameKey));
+  let ex = joinRanges((sec.exp || []).map((l) => sinceLine(leadRange(monthYears(l))))).filter((l) => !DURATION.test(l));
   const recs = labelledJobs(ex);
   out.work.push(...recs);
+  const cols = recs.length ? null : columnJobs(ex);
+  if (cols) { out.work.push(...cols.jobs); ex = [...ex.slice(0, cols.from), ...ex.slice(cols.to)]; }
   // «Position, Company LLP (City)» над строкой периода: так устроено все резюме, если перед первым периодом
   // стоит строка с организацией, а сразу после него организации и «Должность: …» нет
   // (строка организации прямо перед следующим периодом - это уже следующее место работы)
@@ -727,7 +803,8 @@ export function parseResume(text0, { matcher, protect, ocr = false } = {}) {
     for (const part of v.split(/\s*[,;•·|▪●]\s*|\.\s+|\s+[–—-]\s+/u)) {
       const s = part.replace(BULLET, '').replace(/[.\s]+$/, '').trim();
       if (s.length < 2 || s.length > 60 || !/\p{L}/u.test(s) || s.split(/\s+/).length > 6) continue;
-      if (langOf(s) || levelOf(s) || headingOf(s)) continue; // «Английский - B2» в разделе навыков, заголовки
+      // «Английский - B2» в разделе навыков, заголовки; OncePlatform: «Продвинутый уровень AutoCAD и Civil 3D» - навык
+      if (langOf(s) || (levelOf(s) && s.split(/\s+/).length <= 2) || headingOf(s)) continue;
       out.skillsRaw.push(s);
     }
   }

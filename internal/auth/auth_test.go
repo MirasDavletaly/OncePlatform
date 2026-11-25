@@ -13,13 +13,42 @@ import (
 // A login locked by failures from other IPs stays locked for a fresh IP
 // (rotating IPs must not bypass the limit). Blocked logins never reach the DB.
 func TestLoginLockedPerUsernameAcrossIPs(t *testing.T) {
-	s := &Service{LoginLimiter: NewLimiter(5, time.Minute, 5*time.Minute), UserLimiter: NewLimiter(3, time.Hour, time.Hour)}
+	s := &Service{LoginLimiter: NewLimiter(5, time.Minute, 5*time.Minute), UserLimiter: NewLimiter(3, time.Hour, time.Hour), IPLimiter: NewLimiter(3, time.Hour, time.Hour)}
 	for i := 0; i < 3; i++ {
 		s.UserLimiter.Hit("alessio")
 	}
 	_, err := s.Login(context.Background(), " Alessio ", "guess", "203.0.113.9", "")
 	if e, ok := apperr.As(err); !ok || e.Code != "rate_limited" {
 		t.Fatalf("expected rate_limited, got %v", err)
+	}
+}
+
+// Logins that cannot exist (a 60 KB string) are refused before the per-login limiters and the database; they still
+// count against the address, which then locks out random logins too.
+func TestLoginJunkUsernamesNotKept(t *testing.T) {
+	s := &Service{LoginLimiter: NewLimiter(5, time.Minute, 5*time.Minute), UserLimiter: NewLimiter(3, time.Hour, time.Hour), IPLimiter: NewLimiter(3, time.Hour, time.Hour)}
+	long := strings.Repeat("x", 60_000)
+	for i := 0; i < 3; i++ {
+		if _, err := s.Login(context.Background(), long, "guess", "203.0.113.7", ""); err == nil {
+			t.Fatal("a junk login signed in")
+		}
+	}
+	if len(s.LoginLimiter.entries) != 0 || len(s.UserLimiter.entries) != 0 {
+		t.Fatalf("junk logins kept in memory: %d, %d", len(s.LoginLimiter.entries), len(s.UserLimiter.entries))
+	}
+	_, err := s.Login(context.Background(), "Dinara", "guess", "203.0.113.7", "")
+	if e, ok := apperr.As(err); !ok || e.Code != "rate_limited" {
+		t.Fatalf("the address should be locked after 3 failures, got %v", err)
+	}
+}
+
+func TestLimiterBounded(t *testing.T) {
+	l := NewLimiter(5, time.Hour, time.Hour)
+	for i := 0; i < maxLimiterEntries+10; i++ {
+		l.Hit(strings.Repeat("k", 3) + string(rune(i)))
+	}
+	if len(l.entries) > maxLimiterEntries {
+		t.Fatalf("limiter grew to %d entries", len(l.entries))
 	}
 }
 

@@ -12,6 +12,7 @@ import (
 	"onceplatform/internal/apperr"
 	"onceplatform/internal/cv"
 	"onceplatform/internal/files"
+	"onceplatform/internal/workflow"
 )
 
 func (a *api) cvRoutes(r chi.Router) {
@@ -27,6 +28,8 @@ func (a *api) cvRoutes(r chi.Router) {
 	r.Post("/cv/candidates/{id}/consent-file", a.uploadConsentFile)
 	r.Get("/cv/candidates/{id}/consent-file", a.consentFile)
 	r.Get("/cv/candidates/{id}/export.docx", a.exportCandidate)
+	r.Get("/cv/letterheads", a.listLetterheads)
+	r.Put("/cv/letterheads/{id}", a.saveLetterhead)
 	r.Get("/cv/documents", a.listDocuments)
 	r.Post("/cv/documents", a.uploadDocuments)
 	r.Post("/cv/documents/{id}/assign", a.assignDocument)
@@ -60,8 +63,13 @@ func (a *api) listCandidates(w http.ResponseWriter, r *http.Request) {
 // (the caller removes the form); nil means the error is already written.
 func (a *api) multipartFiles(w http.ResponseWriter, r *http.Request) []*multipart.FileHeader {
 	const maxFiles = 20
+	// the right first: a role that may not upload must not get gigabytes written to the server's disk before a 403
+	if err := actor(r).Require(workflow.PermCVManage); err != nil {
+		a.writeError(w, r, err)
+		return nil
+	}
 	r.Body = http.MaxBytesReader(w, r.Body, a.files.MaxBytes()*maxFiles+(1<<20))
-	if err := r.ParseMultipartForm(32 << 20); err != nil {
+	if err := r.ParseMultipartForm(1 << 20); err != nil {
 		a.writeError(w, r, apperr.BadRequest("Expected multipart/form-data with files"))
 		return nil
 	}
@@ -243,8 +251,10 @@ func (a *api) candidateText(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]string{"text": text})
 }
 
-func (a *api) candidateFile(w http.ResponseWriter, r *http.Request)  { a.serveCandidateFile(w, r, false) }
-func (a *api) consentFile(w http.ResponseWriter, r *http.Request)    { a.serveCandidateFile(w, r, true) }
+func (a *api) candidateFile(w http.ResponseWriter, r *http.Request) {
+	a.serveCandidateFile(w, r, false)
+}
+func (a *api) consentFile(w http.ResponseWriter, r *http.Request) { a.serveCandidateFile(w, r, true) }
 
 // serveCandidateFile works like attachment downloads: PDFs and images may be
 // shown inline in the portal's preview, everything else is downloaded.
@@ -285,8 +295,12 @@ func serveStoredFile(w http.ResponseWriter, r *http.Request, name, mt string, mo
 }
 
 func (a *api) uploadConsentFile(w http.ResponseWriter, r *http.Request) {
+	if err := actor(r).Require(workflow.PermCVManage); err != nil {
+		a.writeError(w, r, err)
+		return
+	}
 	r.Body = http.MaxBytesReader(w, r.Body, a.files.MaxBytes()+(1<<20))
-	if err := r.ParseMultipartForm(32 << 20); err != nil {
+	if err := r.ParseMultipartForm(1 << 20); err != nil {
 		a.writeError(w, r, apperr.BadRequest("Expected multipart/form-data with the consent file"))
 		return
 	}
@@ -311,7 +325,8 @@ func (a *api) uploadConsentFile(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *api) exportCandidate(w http.ResponseWriter, r *http.Request) {
-	name, body, err := a.cv.Export(r.Context(), actor(r), chi.URLParam(r, "id"), r.URL.Query().Get("lang"))
+	q := r.URL.Query()
+	name, body, err := a.cv.Export(r.Context(), actor(r), chi.URLParam(r, "id"), q.Get("lang"), q.Get("letterhead"))
 	if err != nil {
 		a.writeError(w, r, err)
 		return
@@ -322,6 +337,32 @@ func (a *api) exportCandidate(w http.ResponseWriter, r *http.Request) {
 	h.Set("Content-Security-Policy", "default-src 'none'; sandbox; frame-ancestors 'none'")
 	h.Set("Cache-Control", "private, no-store")
 	_, _ = w.Write(body)
+}
+
+func (a *api) listLetterheads(w http.ResponseWriter, r *http.Request) {
+	list, err := a.cv.Letterheads(r.Context(), actor(r))
+	if err != nil {
+		a.writeError(w, r, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"items": list})
+}
+
+func (a *api) saveLetterhead(w http.ResponseWriter, r *http.Request) {
+	var in struct {
+		Header string `json:"header"`
+		Footer string `json:"footer"`
+	}
+	if err := decode(w, r, &in); err != nil {
+		a.writeError(w, r, err)
+		return
+	}
+	l, err := a.cv.SaveLetterhead(r.Context(), actor(r), chi.URLParam(r, "id"), in.Header, in.Footer)
+	if err != nil {
+		a.writeError(w, r, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, l)
 }
 
 func (a *api) ticketCV(w http.ResponseWriter, r *http.Request) {

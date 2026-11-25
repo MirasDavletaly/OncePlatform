@@ -99,6 +99,13 @@ func Load() (*Config, error) {
 		}).String()
 	}
 
+	// the example values of .env.example are public (the repository is): never run with them
+	for _, k := range []string{"CSRF_SECRET", "POSTGRES_PASSWORD", "INITIAL_PASSWORD"} {
+		if v := strings.ToLower(os.Getenv(k)); strings.Contains(v, "replace-with") || strings.Contains(v, "change-me") {
+			return nil, fmt.Errorf("%s still has the example value from .env.example: set your own", k)
+		}
+	}
+
 	secret := strings.TrimSpace(os.Getenv("CSRF_SECRET"))
 	if secret == "" {
 		buf := make([]byte, 32)

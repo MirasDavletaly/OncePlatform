@@ -26,9 +26,14 @@ import (
 const MaxExtractedChars = 5_000_000
 
 const (
-	maxXMLPartBytes = 100 << 20 // decompressed size limit for a single OOXML part
-	maxTextFileRead = 50 << 20
+	maxXMLPartBytes = 20 << 20              // decompressed size limit for a single OOXML part
+	maxTextFileRead = 4 * MaxExtractedChars // bytes of a text file or of pdftotext output that are read at all
+	// maxXMLDepth: real documents nest a few dozen levels, and the XML decoder keeps a stack entry per open
+	// element - millions of nested tags in a 12 KB .docx took hundreds of megabytes
+	maxXMLDepth = 512
 )
+
+var errTooDeep = errors.New("the document is nested too deeply to be read")
 
 // ErrUnsupported means the format has no text extractor (images, archives,
 // legacy binary Office formats).
@@ -70,9 +75,15 @@ func SanitizeText(s string) string {
 	s = strings.ReplaceAll(s, "\r\n", "\n")
 	s = strings.ReplaceAll(s, "\f", "\n\n")
 	s = collapseBlankLines(s)
-	if utf8.RuneCountInString(s) > MaxExtractedChars {
-		r := []rune(s)
-		s = string(r[:MaxExtractedChars])
+	if len(s) > MaxExtractedChars { // bytes >= characters: only a long text can be over the cap
+		n := 0
+		for i := range s { // cut by byte index: a []rune copy of 20 MB of text would take 80 MB more
+			if n == MaxExtractedChars {
+				s = s[:i]
+				break
+			}
+			n++
+		}
 	}
 	return strings.TrimSpace(s)
 }
@@ -86,7 +97,7 @@ func extractPDF(ctx context.Context, path string) (string, error) {
 	defer cancel()
 	cmd := exec.CommandContext(ctx, "pdftotext", "-enc", "UTF-8", "-q", path, "-")
 	var stdout, stderr bytes.Buffer
-	cmd.Stdout = &limitedWriter{w: &stdout, n: 64 << 20}
+	cmd.Stdout = &limitedWriter{w: &stdout, n: maxTextFileRead}
 	cmd.Stderr = &limitedWriter{w: &stderr, n: 4096}
 	if err := cmd.Run(); err != nil {
 		if errors.Is(err, exec.ErrNotFound) {
@@ -156,6 +167,7 @@ func wordprocessingText(r io.Reader) (string, error) {
 	dec.Strict = false // some generators write a bare "&" (R&D); Word opens such files
 	var b strings.Builder
 	inText := false
+	depth := 0
 	for {
 		tok, err := dec.Token()
 		if err == io.EOF {
@@ -166,6 +178,9 @@ func wordprocessingText(r io.Reader) (string, error) {
 		}
 		switch t := tok.(type) {
 		case xml.StartElement:
+			if depth++; depth > maxXMLDepth {
+				return "", errTooDeep
+			}
 			switch t.Name.Local {
 			case "t":
 				inText = true
@@ -175,6 +190,7 @@ func wordprocessingText(r io.Reader) (string, error) {
 				b.WriteByte('\n')
 			}
 		case xml.EndElement:
+			depth--
 			switch t.Name.Local {
 			case "t":
 				inText = false
@@ -197,8 +213,10 @@ func wordprocessingText(r io.Reader) (string, error) {
 
 func extractXLSX(path string) (string, error) {
 	f, err := excelize.OpenFile(path, excelize.Options{
-		UnzipSizeLimit:    1 << 30,
-		UnzipXMLSizeLimit: maxXMLPartBytes,
+		// the app container has 512 MB: a zip bomb must fail, not exhaust it (parts other than sheets are
+		// read into memory whole)
+		UnzipSizeLimit:    64 << 20,
+		UnzipXMLSizeLimit: 16 << 20,
 	})
 	if err != nil {
 		return "", err
@@ -206,12 +224,16 @@ func extractXLSX(path string) (string, error) {
 	defer f.Close()
 	var b strings.Builder
 	for _, sheet := range f.GetSheetList() {
-		rows, err := f.GetRows(sheet)
+		rows, err := f.Rows(sheet) // row by row: GetRows builds the whole sheet before the cap below is checked
 		if err != nil {
 			continue
 		}
 		fmt.Fprintf(&b, "## %s\n", sheet)
-		for _, row := range rows {
+		for rows.Next() {
+			row, err := rows.Columns()
+			if err != nil {
+				break
+			}
 			line := strings.TrimRight(strings.Join(row, "\t"), "\t")
 			if strings.TrimSpace(line) == "" {
 				continue
@@ -219,9 +241,11 @@ func extractXLSX(path string) (string, error) {
 			b.WriteString(line)
 			b.WriteByte('\n')
 			if b.Len() > MaxExtractedChars*4 {
+				_ = rows.Close()
 				return b.String(), nil
 			}
 		}
+		_ = rows.Close()
 		b.WriteByte('\n')
 	}
 	return b.String(), nil
@@ -249,6 +273,9 @@ func extractPPTX(path string) (string, error) {
 	sort.Slice(slides, func(i, j int) bool { return slides[i].n < slides[j].n })
 	var b strings.Builder
 	for _, s := range slides {
+		if b.Len() > MaxExtractedChars*4 { // the text cap holds across slides too
+			break
+		}
 		rc, err := openZipPart(&zr.Reader, s.name)
 		if err != nil {
 			continue
@@ -257,19 +284,25 @@ func extractPPTX(path string) (string, error) {
 		dec := xml.NewDecoder(rc)
 		dec.Strict = false
 		inText := false
-		for {
+		depth := 0
+		for b.Len() <= MaxExtractedChars*4 {
 			tok, err := dec.Token()
 			if err != nil {
 				break
 			}
 			switch t := tok.(type) {
 			case xml.StartElement:
+				if depth++; depth > maxXMLDepth {
+					rc.Close()
+					return "", errTooDeep
+				}
 				if t.Name.Local == "t" {
 					inText = true
 				} else if t.Name.Local == "br" {
 					b.WriteByte('\n')
 				}
 			case xml.EndElement:
+				depth--
 				if t.Name.Local == "t" {
 					inText = false
 				} else if t.Name.Local == "p" {

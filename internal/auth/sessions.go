@@ -33,13 +33,12 @@ func (s *Service) Login(ctx context.Context, username, password, ip, userAgent s
 	username = strings.TrimSpace(username)
 	userKey := strings.ToLower(username)
 	key := ip + "|" + userKey
-	blocked, wait := s.LoginLimiter.Blocked(key)
-	if b, w := s.UserLimiter.Blocked(userKey); b && w > wait {
-		blocked, wait = true, w
+	if err := s.signInBlocked(ip, key, userKey); err != nil {
+		return nil, err
 	}
-	if blocked {
-		mins := int(wait.Minutes()) + 1
-		return nil, apperr.RateLimited(fmt.Sprintf("Too many sign-in attempts. Try again in %d min.", mins))
+	if !validLogin(username) {
+		s.IPLimiter.Hit(ip)
+		return nil, apperr.Unauthorized("Wrong login or password")
 	}
 
 	var (
@@ -64,6 +63,7 @@ func (s *Service) Login(ctx context.Context, username, password, ip, userAgent s
 	if !found || !ok || !active {
 		s.LoginLimiter.Hit(key)
 		s.UserLimiter.Hit(userKey)
+		s.IPLimiter.Hit(ip)
 		details := map[string]any{"username": username}
 		if found && ok && !active {
 			details["reason"] = "inactive"
@@ -87,6 +87,27 @@ func (s *Service) Login(ctx context.Context, username, password, ip, userAgent s
 		return nil, err
 	}
 	return res, nil
+}
+
+// signInBlocked refuses a sign-in attempt while the address, the address and
+// login, or the login is locked out (keys "" are skipped).
+func (s *Service) signInBlocked(ip, key, userKey string) error {
+	blocked, wait := s.IPLimiter.Blocked(ip)
+	for _, l := range []struct {
+		lim *Limiter
+		key string
+	}{{s.LoginLimiter, key}, {s.UserLimiter, userKey}} {
+		if l.key == "" {
+			continue
+		}
+		if b, w := l.lim.Blocked(l.key); b && w > wait {
+			blocked, wait = true, w
+		}
+	}
+	if blocked {
+		return apperr.RateLimited(fmt.Sprintf("Too many sign-in attempts. Try again in %d min.", int(wait.Minutes())+1))
+	}
+	return nil
 }
 
 // startSession creates a browser session for a user who has just proven who
@@ -129,7 +150,8 @@ func (s *Service) LookupSession(ctx context.Context, token string) (u *User, ses
 		SELECT s.id, s.user_id, s.expires_at, s.last_seen_at,
 		       u.id, u.username, u.email, u.full_name, u.role, u.is_active, u.language, u.last_login_at, u.created_at, u.updated_at
 		FROM sessions s JOIN users u ON u.id = s.user_id
-		WHERE s.token_hash = $1 AND s.expires_at > now() AND u.is_active`, HashToken(token)).
+		WHERE s.token_hash = $1 AND s.expires_at > now() AND s.created_at > now() - $2::interval AND u.is_active`,
+		HashToken(token), fmt.Sprintf("%d seconds", int(sessionMaxAge.Seconds()))).
 		Scan(&sess.ID, &sess.UserID, &sess.ExpiresAt, &lastSeen,
 			&u.ID, &u.Username, &u.Email, &u.FullName, &u.Role, &u.IsActive, &u.Language, &u.LastLoginAt, &u.CreatedAt, &u.UpdatedAt)
 	if db.IsNoRows(err) {
@@ -148,6 +170,16 @@ func (s *Service) LookupSession(ctx context.Context, token string) (u *User, ses
 		refreshed = true
 	}
 	return u, sess, refreshed, nil
+}
+
+// LogoutOthers ends the user's other sessions (a forgotten computer, a lost phone).
+func (s *Service) LogoutOthers(ctx context.Context, actor workflow.Actor, keepSessionID string) (int64, error) {
+	tag, err := s.pool.Exec(ctx, `DELETE FROM sessions WHERE user_id = $1 AND id::text <> $2`, actor.UserID, keepSessionID)
+	if err != nil {
+		return 0, err
+	}
+	n := tag.RowsAffected()
+	return n, audit.Write(ctx, s.pool, audit.FromActor(actor, "auth.logout_others", "user", actor.UserID, map[string]any{"sessions": n}))
 }
 
 // Logout terminates the session identified by token.

@@ -12,13 +12,16 @@ import { applyDocuments, readDocument, samePerson } from './cert.js';
 const chunks = [];
 for await (const c of process.stdin) chunks.push(c);
 const req = JSON.parse(Buffer.concat(chunks).toString('utf8') || '{}');
+// The text comes from whoever uploads the file. A real CV is a few tens of thousands of characters, a diploma a few
+// thousand: longer text is cut, so no pattern can be made to run for minutes on megabytes of crafted text.
+const cap = (s, n) => String(s ?? '').slice(0, n);
 
 const ops = {
-  parse: () => ({ profile: parse(req.text, !!req.ocr) }),
+  parse: () => ({ profile: parse(cap(req.text, 100_000), !!req.ocr) }),
   refresh: () => ({ profile: refresh(req.profile || {}) }),
   match: () => ({ roles: match(req.roles, req.candidates) }),
   meta: () => meta(),
-  document: () => readDocument(req.text, req.candidates || []),
+  document: () => readDocument(cap(req.text, 40_000), req.candidates || []),
   documents: () => ({ profile: applyDocuments(req.profile, req.docs || []) }),
   person: () => ({ match: samePerson(req.profile, req.candidates || []) }),
 };

@@ -24,6 +24,8 @@ export async function copyText(text: string): Promise<boolean> {
 /** Safe "next" redirect target: only same-site absolute paths. */
 export function safeNext(next: string | null): string | null {
   if (!next) return null
-  if (!next.startsWith('/') || next.startsWith('//') || next.startsWith('/\\')) return null
+  // browsers drop tabs and newlines and read "\" as "/": "/\t/evil.com" would become "//evil.com"
+  // eslint-disable-next-line no-control-regex
+  if (!next.startsWith('/') || /[\u0000-\u001f\u007f\\]/.test(next) || next.startsWith('//')) return null
   return next
 }

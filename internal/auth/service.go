@@ -2,6 +2,7 @@ package auth
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
 	"net/mail"
 	"regexp"
@@ -20,9 +21,18 @@ import (
 
 const (
 	SessionTTL = 7 * 24 * time.Hour
+	// sessionMaxAge ends a session however active it is: a stolen cookie
+	// cannot be kept alive forever by the sliding expiry.
+	sessionMaxAge = 30 * 24 * time.Hour
 	// sessionRefreshAfter controls how often the sliding expiry is pushed
 	// forward (to avoid a database write on every request).
 	sessionRefreshAfter = 10 * time.Minute
+
+	// Per client address regardless of the login: random logins (each a new
+	// limiter key) and one-time code guesses are capped too.
+	ipMaxAttempts = 60
+	ipWindow      = 10 * time.Minute
+	ipLockout     = 15 * time.Minute
 
 	loginMaxAttempts = 5
 	loginWindow      = time.Minute
@@ -67,6 +77,7 @@ type Service struct {
 	CSRF         *CSRF
 	LoginLimiter *Limiter // keyed by IP + login
 	UserLimiter  *Limiter // keyed by login only
+	IPLimiter    *Limiter // keyed by IP only: failed sign-ins, codes and registration links
 }
 
 // NewService creates the auth service.
@@ -77,7 +88,29 @@ func NewService(pool *pgxpool.Pool, log *slog.Logger, csrfSecret []byte) *Servic
 		CSRF:         NewCSRF(csrfSecret),
 		LoginLimiter: NewLimiter(loginMaxAttempts, loginWindow, loginLockout),
 		UserLimiter:  NewLimiter(userMaxAttempts, userWindow, userLockout),
+		IPLimiter:    NewLimiter(ipMaxAttempts, ipWindow, ipLockout),
 	}
+}
+
+// endAccess signs a user out everywhere except keepSessionID (empty: all
+// sessions) and revokes their personal API tokens and Claude (OAuth) tokens:
+// after a password change, a reset or a deactivation nothing issued before
+// keeps working.
+func endAccess(ctx context.Context, tx pgx.Tx, userID, keepSessionID string) error {
+	if _, err := tx.Exec(ctx, `DELETE FROM sessions WHERE user_id = $1 AND id::text <> $2`, userID, keepSessionID); err != nil {
+		return err
+	}
+	if _, err := tx.Exec(ctx, `UPDATE api_tokens SET revoked_at = now() WHERE user_id = $1 AND revoked_at IS NULL`, userID); err != nil {
+		return err
+	}
+	_, err := tx.Exec(ctx, `UPDATE oauth_tokens SET revoked_at = now() WHERE user_id = $1 AND revoked_at IS NULL`, userID)
+	return err
+}
+
+// validLogin: a login that could exist. Anything else is refused before the
+// limiters and the audit log see it (a 60 KB "login" must not be kept in memory).
+func validLogin(username string) bool {
+	return usernameRe.MatchString(strings.TrimSpace(username))
 }
 
 const userColumns = `id, username, email, full_name, role, is_active, language, last_login_at, created_at, updated_at,
@@ -333,7 +366,7 @@ func (s *Service) UpdateUser(ctx context.Context, actor workflow.Actor, id strin
 			return err
 		}
 		if !active {
-			if _, err := tx.Exec(ctx, `DELETE FROM sessions WHERE user_id = $1`, id); err != nil {
+			if err := endAccess(ctx, tx, id, ""); err != nil {
 				return err
 			}
 		}
@@ -388,7 +421,7 @@ func (s *Service) ResetPassword(ctx context.Context, actor workflow.Actor, id, p
 			WHERE id = $1`, id, hash); err != nil {
 			return err
 		}
-		if _, err := tx.Exec(ctx, `DELETE FROM sessions WHERE user_id = $1`, id); err != nil {
+		if err := endAccess(ctx, tx, id, ""); err != nil {
 			return err
 		}
 		return audit.Write(ctx, tx, audit.FromActor(actor, "user.password_reset", "user", id, nil))
@@ -402,6 +435,11 @@ func (s *Service) ResetPassword(ctx context.Context, actor workflow.Actor, id, p
 // ChangePassword changes the actor's own password after verifying the
 // current one. Other sessions of the user are terminated.
 func (s *Service) ChangePassword(ctx context.Context, actor workflow.Actor, keepSessionID, current, next string) error {
+	// a stolen session must not be a way to guess the password: wrong current passwords count like failed sign-ins
+	key := "password|" + actor.UserID
+	if blocked, wait := s.UserLimiter.Blocked(key); blocked {
+		return apperr.RateLimited(fmt.Sprintf("Too many attempts. Try again in %d min.", int(wait.Minutes())+1))
+	}
 	var hash string
 	if err := s.pool.QueryRow(ctx, `SELECT password_hash FROM users WHERE id = $1`, actor.UserID).Scan(&hash); err != nil {
 		return err
@@ -411,6 +449,7 @@ func (s *Service) ChangePassword(ctx context.Context, actor workflow.Actor, keep
 		return err
 	}
 	if !ok {
+		s.UserLimiter.Hit(key)
 		return apperr.New(422, "wrong_password", "The current password is incorrect")
 	}
 	if err := ValidatePassword(next); err != nil {
@@ -424,10 +463,12 @@ func (s *Service) ChangePassword(ctx context.Context, actor workflow.Actor, keep
 		return err
 	}
 	return db.InTx(ctx, s.pool, func(tx pgx.Tx) error {
-		if _, err := tx.Exec(ctx, `UPDATE users SET password_hash = $2, updated_at = now() WHERE id = $1`, actor.UserID, newHash); err != nil {
+		// a pending one-time code is cancelled too: the person has a password of their own now
+		if _, err := tx.Exec(ctx, `UPDATE users SET password_hash = $2, invite_hash = NULL, invite_expires_at = NULL, updated_at = now()
+			WHERE id = $1`, actor.UserID, newHash); err != nil {
 			return err
 		}
-		if _, err := tx.Exec(ctx, `DELETE FROM sessions WHERE user_id = $1 AND id::text <> $2`, actor.UserID, keepSessionID); err != nil {
+		if err := endAccess(ctx, tx, actor.UserID, keepSessionID); err != nil {
 			return err
 		}
 		return audit.Write(ctx, tx, audit.FromActor(actor, "user.password_change", "user", actor.UserID, nil))
@@ -460,6 +501,7 @@ func (s *Service) EnsureInitialUsers(ctx context.Context, users []config.Initial
 func (s *Service) Cleanup(ctx context.Context) error {
 	s.LoginLimiter.Cleanup()
 	s.UserLimiter.Cleanup()
+	s.IPLimiter.Cleanup()
 	_, err := s.pool.Exec(ctx, `DELETE FROM sessions WHERE expires_at < now()`)
 	return err
 }

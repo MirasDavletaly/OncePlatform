@@ -328,6 +328,15 @@ export interface Candidate {
   translation_status: Record<string, 'ok' | 'outdated' | 'missing'>
 }
 
+/** A company letterhead of the standard CV (Word export). */
+export interface Letterhead {
+  id: string
+  name: string
+  header: string
+  footer: string
+  updated_at: string | null
+}
+
 /** What the engine read from a diploma or certificate. */
 export interface CvDocInfo {
   /** id: a visa, a passport or an identity card - kept as a file, never entered into the profile */

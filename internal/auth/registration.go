@@ -3,7 +3,7 @@ package auth
 import (
 	"context"
 	"crypto/subtle"
-	"fmt"
+	"regexp"
 	"strings"
 	"time"
 
@@ -107,25 +107,30 @@ type RegisterInput struct {
 	Password string `json:"password"`
 }
 
+var asciiLogin = regexp.MustCompile(`^[A-Za-z0-9._-]+$`)
+
 var errLinkClosed = apperr.Unauthorized("This registration link no longer works. Ask your administrator for a new one.")
 
 // Register creates a recruiter account through the registration link and
 // signs the person in. Wrong links count against the sign-in limits of the
 // address; registrations with the right link do not (colleagues share an IP).
 func (s *Service) Register(ctx context.Context, in RegisterInput, ip, userAgent string) (*LoginResult, error) {
-	key := ip + "|register"
-	if blocked, wait := s.LoginLimiter.Blocked(key); blocked {
-		return nil, apperr.RateLimited(fmt.Sprintf("Too many attempts. Try again in %d min.", int(wait.Minutes())+1))
+	if err := s.signInBlocked(ip, "", ""); err != nil {
+		return nil, err
 	}
 	if ok, err := s.RegistrationOpen(ctx, in.Token); err != nil {
 		return nil, err
 	} else if !ok {
-		s.LoginLimiter.Hit(key)
+		s.IPLimiter.Hit(ip)
 		return nil, errLinkClosed
 	}
 	username, err := NormalizeUsername(in.Username)
 	if err != nil {
 		return nil, err
+	}
+	// Latin letters only: a self-chosen login must not imitate a colleague's ("Аlessio" with a Cyrillic А)
+	if !asciiLogin.MatchString(username) {
+		return nil, apperr.Validation("Login: Latin letters, digits, dot, dash or underscore")
 	}
 	name, err := normalizeName(in.FullName)
 	if err != nil {

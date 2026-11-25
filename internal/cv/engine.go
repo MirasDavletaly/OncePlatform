@@ -6,6 +6,9 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"image"
+	_ "image/jpeg" // image.DecodeConfig of scanned CVs and documents
+	_ "image/png"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -188,6 +191,9 @@ func extractCV(ctx context.Context, tmpDir, path, ext string) (string, bool, err
 	defer cancel()
 	switch ext {
 	case "png", "jpg", "jpeg":
+		if err := checkImageSize(path); err != nil {
+			return "", true, err
+		}
 		t, err := tesseract(ctx, path)
 		return files.SanitizeText(t), true, err
 	case "pdf":
@@ -209,6 +215,26 @@ func extractCV(ctx context.Context, tmpDir, path, ext string) (string, bool, err
 	}
 }
 
+// maxImagePixels: an A4 scan at 600 dpi is about 35 megapixels. A tiny file can
+// declare a giant picture, which OCR would unpack into gigabytes of memory.
+const maxImagePixels = 40_000_000
+
+func checkImageSize(path string) error {
+	f, err := os.Open(path)
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+	cfg, _, err := image.DecodeConfig(f)
+	if err != nil {
+		return fmt.Errorf("the image cannot be read: %w", err)
+	}
+	if int64(cfg.Width)*int64(cfg.Height) > maxImagePixels {
+		return fmt.Errorf("the image is too large to recognise (%d×%d pixels)", cfg.Width, cfg.Height)
+	}
+	return nil
+}
+
 func letters(s string) int {
 	n := 0
 	for _, r := range s {
@@ -225,7 +251,9 @@ func ocrPDF(ctx context.Context, tmpDir, path string) (string, error) {
 		return "", err
 	}
 	defer os.RemoveAll(dir)
-	if err := run(ctx, "pdftoppm", "-r", "300", "-gray", "-png", "-l", fmt.Sprint(ocrMaxPages), path, filepath.Join(dir, "p")); err != nil {
+	// -scale-to: the long side at most 3508 px (A4 at 300 dpi) whatever page size the PDF declares - a "page" of
+	// 40000 px would otherwise be rendered at 300 dpi into gigabytes
+	if err := run(ctx, "pdftoppm", "-scale-to", "3508", "-gray", "-png", "-l", fmt.Sprint(ocrMaxPages), path, filepath.Join(dir, "p")); err != nil {
 		return "", err
 	}
 	pages, _ := filepath.Glob(filepath.Join(dir, "p*.png"))

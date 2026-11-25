@@ -12,6 +12,7 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestValidateRoles(t *testing.T) {
@@ -76,6 +77,10 @@ func TestAnonymize(t *testing.T) {
 		"work":[{"summary":"I declare the above is true. ____ JOHN Q. PUBLIC JR. ____ Date"}]}`)}, true)); strings.Contains(strings.ToUpper(string(nm)), "PUBLIC") || strings.Contains(string(nm), "JOHN") {
 		t.Errorf("the name as the title: %s", nm)
 	}
+	// the parsed name differs from the candidate's name (an English CV of a person entered in Russian)
+	if nm, _ := json.Marshal(view(&Candidate{FullName: "Ахметов Арман Болатович", Error: "tesseract: Arman Akhmetov", Profile: json.RawMessage(`{"basics":{"name":"Arman Akhmetov","summary":"Arman Akhmetov has 10 years in ERP"}}`)}, true)); strings.Contains(string(nm), "Akhmetov") {
+		t.Errorf("the parsed name leaks: %s", nm)
+	}
 	// the name glued into one word: masked in the other texts too
 	if nm, _ := json.Marshal(view(&Candidate{Profile: json.RawMessage(`{"basics":{"label":"JOHNPUBLIC"},"work":[{"summary":"Signed: JOHNPUBLIC"}]}`)}, true)); strings.Contains(string(nm), "JOHNPUBLIC") {
 		t.Errorf("the glued name as the title: %s", nm)
@@ -96,32 +101,68 @@ func TestBuildDocx(t *testing.T) {
 		"education":[{"institution":"Университет","area":"ИС","endDate":"2007","degree":"master"}],"skills":[{"name":"Jira"}],
 		"languages":[{"language":"en","fluency":"B2"}],"certificates":[{"name":"PMP","date":"2020"}],"meta":{"totalYears":12.5}}`), &p)
 	meta := json.RawMessage(`{"countries":[{"code":"KZ","en":"Kazakhstan","ru":"Казахстан"}],"cities":[{"id":"astana","country":"KZ","en":"Astana","ru":"Астана"}]}`)
-	body, err := buildDocx(&p, "ru", placeLabels(meta, "ru"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	zr, err := zip.NewReader(bytes.NewReader(body), int64(len(body)))
-	if err != nil {
-		t.Fatal(err)
-	}
-	var doc string
-	for _, f := range zr.File {
-		rc, _ := f.Open()
-		b, _ := io.ReadAll(rc)
-		rc.Close()
-		if err := xml.Unmarshal(b, new(struct{})); err != nil {
-			t.Errorf("%s is not well-formed XML: %v", f.Name, err)
+	now := time.Date(2026, 11, 25, 12, 0, 0, 0, time.UTC)
+	parts := func(lh *docLetterhead) map[string]string {
+		body, err := buildDocx(&p, "ru", placeLabels(meta, "ru"), lh, now)
+		if err != nil {
+			t.Fatal(err)
 		}
-		if f.Name == "word/document.xml" {
-			doc = string(b)
+		zr, err := zip.NewReader(bytes.NewReader(body), int64(len(body)))
+		if err != nil {
+			t.Fatal(err)
 		}
+		out := map[string]string{}
+		for _, f := range zr.File {
+			rc, _ := f.Open()
+			b, _ := io.ReadAll(rc)
+			rc.Close()
+			if strings.HasSuffix(f.Name, ".xml") || strings.HasSuffix(f.Name, ".rels") {
+				if err := xml.Unmarshal(b, new(struct{})); err != nil {
+					t.Errorf("%s is not well-formed XML: %v", f.Name, err)
+				}
+			}
+			out[f.Name] = string(b)
+		}
+		return out
 	}
-	for _, want := range []string{"Ахметов &lt;Арман&gt; &amp; Co", "03.2019 - по настоящее время", "Английский - B2", "PMP (2020)", "12.5 лет",
-		"ТОО «Нурсофт», Астана, Казахстан", "Freelance, Самарканд-2", "Проекты", "ERP для Казпочты", "01.2021 - 12.2022",
-		"Роль: руководитель; Заказчик: АО «Казпочта»", "ИС (магистр)", "Краткая информация", "Внедрения ERP 10 лет"} {
+	plain := parts(nil)
+	doc := plain["word/document.xml"]
+	for _, want := range []string{"Ахметов &lt;Арман&gt; &amp; Co", "Рекомендуемая должность: Руководитель проектов", "Общий стаж: 12,5 года",
+		"мар. 2019 – по н.в. (7 лет 9 мес.)", "янв. 2017 – фев. 2019 (2 года 2 мес.)", "Английский (B2)", "PMP (2020)",
+		"ТОО «Нурсофт», Астана, Казахстан", "Freelance, Самарканд-2", "Работодатель", "Основные обязанности", "Проекты", "ERP для Казпочты",
+		"янв. 2021 – дек. 2022 (2 года)", "руководитель; Заказчик: АО «Казпочта»; 40 филиалов", "Магистр – ИС, Университет, 2007", "Внедрения ERP 10 лет"} {
 		if !strings.Contains(doc, want) {
 			t.Errorf("document.xml misses %q", want)
 		}
+	}
+	if _, ok := plain["word/header1.xml"]; ok || strings.Contains(doc, "headerReference") {
+		t.Error("no letterhead asked, a header made")
+	}
+	// on a letterhead: the logo and the lines in the header, the company in the footer
+	logo, err := logos.ReadFile("letterheads/gs.jpg")
+	if err != nil {
+		t.Fatal(err)
+	}
+	withLH := parts(&docLetterhead{logo: logo, ext: "jpg", width: 1370000, height: 432000,
+		header: []string{"Alpha & Co LLP", "*Your projects, staffed*", "Astana"}, footer: []string{"Alpha & Co LLP", "+7 700 000 00 00"}})
+	if h := withLH["word/header1.xml"]; !strings.Contains(h, "Alpha &amp; Co LLP") || !strings.Contains(h, `<w:i/>`) || !strings.Contains(h, `r:embed="rIdLogo"`) || strings.Contains(h, "*") {
+		t.Errorf("header: %s", h)
+	}
+	if !strings.Contains(withLH["word/footer1.xml"], "+7 700 000 00 00") || withLH["word/media/logo.jpg"] != string(logo) ||
+		!strings.Contains(withLH["word/document.xml"], `<w:headerReference w:type="default" r:id="rIdH"/><w:footerReference`) {
+		t.Error("footer, logo or section references missing")
+	}
+}
+
+func TestLetterheadText(t *testing.T) {
+	if s, err := cleanLetterheadText("header", " Alpha LLP \r\n‮Astana\u0007\n\n"); err != nil || s != "Alpha LLP\nAstana" {
+		t.Fatalf("%q %v", s, err)
+	}
+	if _, err := cleanLetterheadText("header", strings.Repeat("x\n", 9)); err == nil {
+		t.Error("9 lines accepted")
+	}
+	if _, err := cleanLetterheadText("footer", strings.Repeat("x", 201)); err == nil {
+		t.Error("a 201-character line accepted")
 	}
 }
 
@@ -140,7 +181,7 @@ func TestTranslations(t *testing.T) {
 	}
 	en := map[string]string{"basics.label": "Project Manager", "work.0.position": "Project Manager", "skills.1.name": "Risk management"}
 	saved, _ := json.Marshal(map[string]translation{"en": {Source: textsHash(texts), Texts: en}})
-	valid, status := translationState(saved, profile)
+	valid, status := translationState(saved, profile, "Ахметов Арман")
 	if status["en"] != "ok" || status["ru"] != "missing" || valid["en"]["basics.label"] != "Project Manager" {
 		t.Errorf("state: %v %v", status, valid)
 	}
@@ -156,8 +197,14 @@ func TestTranslations(t *testing.T) {
 	}
 	// the profile changed after translating: the translation is outdated and hidden
 	edited := json.RawMessage(strings.Replace(string(profile), "Внедрение ERP", "Внедрение CRM", 1))
-	if valid, status := translationState(saved, edited); status["en"] != "outdated" || valid["en"] != nil {
+	if valid, status := translationState(saved, edited, "Ахметов Арман"); status["en"] != "outdated" || valid["en"] != nil {
 		t.Errorf("edited: %v %v", status, valid)
+	}
+	// a translation of texts that held a name the anonymiser now masks (made before a fix): outdated, never shown
+	signed := json.RawMessage(strings.Replace(string(profile), "Внедрение ERP", "Внедрение ERP. Арман Ахметов", 1))
+	leaky, _ := json.Marshal(map[string]translation{"en": {Source: textsHash(ProfileTexts(signed)), Texts: en}})
+	if _, status := translationState(leaky, signed, "Ахметов Арман"); status["en"] != "outdated" {
+		t.Errorf("a translation of unmasked texts stays valid: %v", status)
 	}
 	// paths that do not exist are ignored
 	if out := applyTexts(profile, map[string]string{"work.5.position": "x", "basics.label.x": "y"}); !strings.Contains(string(out), "Руководитель") {
@@ -191,8 +238,8 @@ func TestProfessionsMatchEngine(t *testing.T) {
 	}
 	var m struct {
 		Professions []struct{ ID string } `json:"professions"`
-		Languages   []string             `json:"languages"`
-		Levels      []string             `json:"levels"`
+		Languages   []string              `json:"languages"`
+		Levels      []string              `json:"levels"`
 	}
 	if err := json.Unmarshal(raw, &m); err != nil {
 		t.Fatal(err)

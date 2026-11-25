@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
 
 	"onceplatform/internal/auth"
@@ -41,9 +42,13 @@ func (a *api) accessLog(next http.Handler) http.Handler {
 		if ww.Status() >= 500 {
 			level = slog.LevelError
 		}
+		p := r.URL.Path
+		if strings.HasPrefix(p, "/join/") { // the registration link is a credential: not in the logs
+			p = "/join/…"
+		}
 		a.log.LogAttrs(r.Context(), level, "http request",
 			slog.String("method", r.Method),
-			slog.String("path", r.URL.Path),
+			slog.String("path", p),
 			slog.Int("status", ww.Status()),
 			slog.Int("bytes", ww.BytesWritten()),
 			slog.Int64("duration_ms", time.Since(start).Milliseconds()),
@@ -87,6 +92,9 @@ func securityHeaders(next http.Handler) http.Handler {
 		h.Set("Referrer-Policy", "strict-origin-when-cross-origin")
 		h.Set("Permissions-Policy", "camera=(), microphone=(), geolocation=(), payment=()")
 		h.Set("Cross-Origin-Opener-Policy", "same-origin")
+		// other sites cannot embed the portal's responses (files, JSON) as images or scripts; CORS requests of
+		// MCP clients are not affected
+		h.Set("Cross-Origin-Resource-Policy", "same-origin")
 		if auth.IsSecureRequest(r) {
 			h.Set("Strict-Transport-Security", "max-age=31536000")
 		}
@@ -127,7 +135,7 @@ func (a *api) loadSession(next http.Handler) http.Handler {
 func cvOnly(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		p := auth.PrincipalFrom(r.Context())
-		if p != nil && !workflow.Can(p.User.Role, workflow.PermView) && !cvAllowed(path.Clean(r.URL.Path)) {
+		if p != nil && !workflow.Can(p.User.Role, workflow.PermView) && !cvAllowed(routeOf(r)) {
 			writeErrorCode(w, http.StatusForbidden, "forbidden", "Your role works with the CV database only")
 			return
 		}
@@ -135,10 +143,20 @@ func cvOnly(next http.Handler) http.Handler {
 	})
 }
 
+// routeOf is the route the router matched ("/api/v1/cv/candidates/{id}"), not
+// the path as sent: "/tickets/X%2f..%2f..%2fcv%2fy/attachments" decodes to a
+// CV-looking path but is routed to a ticket handler.
+func routeOf(r *http.Request) string {
+	if rc := chi.RouteContext(r.Context()); rc != nil {
+		return path.Clean(rc.RoutePattern())
+	}
+	return ""
+}
+
 // cvAllowed: the CV section (without the tasks' key personnel) and the user's own session and password.
 func cvAllowed(p string) bool {
 	switch p {
-	case "/api/v1/auth/logout", "/api/v1/auth/me", "/api/v1/auth/password":
+	case "/api/v1/auth/logout", "/api/v1/auth/logout-others", "/api/v1/auth/me", "/api/v1/auth/password":
 		return true
 	}
 	return strings.HasPrefix(p, "/api/v1/cv/")

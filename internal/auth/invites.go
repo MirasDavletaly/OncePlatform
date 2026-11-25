@@ -5,7 +5,6 @@ import (
 	"crypto/rand"
 	"crypto/sha256"
 	"crypto/subtle"
-	"fmt"
 	"math/big"
 	"strings"
 	"time"
@@ -97,12 +96,12 @@ func (s *Service) Activate(ctx context.Context, username, code, password, ip, us
 	username = strings.TrimSpace(username)
 	userKey := strings.ToLower(username)
 	key := ip + "|" + userKey
-	blocked, wait := s.LoginLimiter.Blocked(key)
-	if b, w := s.UserLimiter.Blocked(userKey); b && w > wait {
-		blocked, wait = true, w
+	if err := s.signInBlocked(ip, key, userKey); err != nil {
+		return nil, err
 	}
-	if blocked {
-		return nil, apperr.RateLimited(fmt.Sprintf("Too many sign-in attempts. Try again in %d min.", int(wait.Minutes())+1))
+	if !validLogin(username) {
+		s.IPLimiter.Hit(ip)
+		return nil, apperr.Unauthorized("Wrong login or code, or the code has expired. Ask your administrator for a new one.")
 	}
 	// the password is checked first: a weak one must not use up an attempt
 	if err := ValidatePassword(password); err != nil {
@@ -124,6 +123,7 @@ func (s *Service) Activate(ctx context.Context, username, code, password, ip, us
 	if !ok {
 		s.LoginLimiter.Hit(key)
 		s.UserLimiter.Hit(userKey)
+		s.IPLimiter.Hit(ip)
 		_ = audit.Write(ctx, s.pool, audit.Entry{UserID: userID, Action: "auth.activate_failed", EntityType: "user", EntityID: userID,
 			Details: map[string]any{"username": username}, Via: workflow.ViaWeb, IP: ip})
 		return nil, apperr.Unauthorized("Wrong login or code, or the code has expired. Ask your administrator for a new one.")
@@ -144,7 +144,7 @@ func (s *Service) Activate(ctx context.Context, username, code, password, ip, us
 		if tag.RowsAffected() == 0 {
 			return apperr.Unauthorized("This code has already been used")
 		}
-		if _, err := tx.Exec(ctx, `DELETE FROM sessions WHERE user_id = $1`, userID); err != nil {
+		if err := endAccess(ctx, tx, userID, ""); err != nil {
 			return err
 		}
 		if err := audit.Write(ctx, tx, audit.Entry{UserID: userID, Action: "user.activate", EntityType: "user", EntityID: userID,

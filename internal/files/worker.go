@@ -3,6 +3,7 @@ package files
 import (
 	"context"
 	"errors"
+	"fmt"
 	"time"
 	"unicode/utf8"
 )
@@ -70,27 +71,46 @@ func (s *Service) rescan(ctx context.Context) {
 	}
 }
 
+// processingMark is kept in extraction_error while a file is being read. A
+// pending file that still has it after a restart took the process down (a
+// stack overflow in a parser cannot be recovered): it fails instead of being
+// retried, so one malicious workbook cannot keep the portal in a crash loop.
+const processingMark = "processing"
+
 func (s *Service) process(ctx context.Context, id string) {
 	if _, busy := s.inflight.LoadOrStore(id, true); busy {
 		return
 	}
 	defer s.inflight.Delete(id)
 
-	var stored, name string
-	err := s.pool.QueryRow(ctx, `SELECT stored_name, original_name FROM attachments
-		WHERE id = $1 AND extraction_status = 'pending'`, id).Scan(&stored, &name)
+	var stored, name, prev string
+	err := s.pool.QueryRow(ctx, `SELECT stored_name, original_name, extraction_error FROM attachments
+		WHERE id = $1 AND extraction_status = 'pending'`, id).Scan(&stored, &name, &prev)
 	if err != nil {
 		return // already processed or deleted
 	}
+	if prev == processingMark {
+		s.log.Warn("text extraction skipped: the last attempt did not finish", "attachment_id", id)
+		_, _ = s.pool.Exec(ctx, `UPDATE attachments SET extraction_status = 'failed', extraction_error = $2 WHERE id = $1`,
+			id, "The file could not be read (its last reading stopped the server)")
+		return
+	}
+	if _, err := s.pool.Exec(ctx, `UPDATE attachments SET extraction_error = $2 WHERE id = $1`, id, processingMark); err != nil {
+		return
+	}
 	start := time.Now()
-	text, err := ExtractText(ctx, s.pathFor(stored), Ext(name))
+	text, err := extractSafely(ctx, s.pathFor(stored), Ext(name))
 	status, errMsg := "done", ""
 	switch {
 	case errors.Is(err, ErrUnsupported):
 		status, text = "unsupported", ""
 	case err != nil:
 		if ctx.Err() != nil {
-			return // shutting down; keep pending for the next start
+			// shutting down: pending again for the next start, without the mark (this was no crash)
+			bg, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+			_, _ = s.pool.Exec(bg, `UPDATE attachments SET extraction_error = '' WHERE id = $1`, id)
+			return
 		}
 		status, text, errMsg = "failed", "", truncateString(err.Error(), 500)
 	}
@@ -103,6 +123,17 @@ func (s *Service) process(ctx context.Context, id string) {
 	}
 	s.log.Info("text extracted", "attachment_id", id, "status", status, "chars", utf8.RuneCountInString(text),
 		"duration_ms", time.Since(start).Milliseconds(), "error", errMsg)
+}
+
+// extractSafely turns a parser panic into an error: the worker runs outside
+// any HTTP recoverer, and an uncaught panic would stop the whole portal.
+func extractSafely(ctx context.Context, path, ext string) (text string, err error) {
+	defer func() {
+		if r := recover(); r != nil {
+			text, err = "", fmt.Errorf("the file could not be read: %v", r)
+		}
+	}()
+	return ExtractText(ctx, path, ext)
 }
 
 func nullIfEmpty(text, status string) any {

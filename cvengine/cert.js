@@ -173,7 +173,8 @@ function titleOf(ls, text) {
   const quoted = text.match(/[«"“]([^»"”\n]{5,150})[»"”]/);
   return quoted ? clean(quoted[1]) : null;
 }
-const clean = (s) => { const t = String(s || '').replace(/^[\s:–«"“-]+|[\s.,;:–»"”-]+$/g, ''); return t.length >= 3 && t.length <= 160 && /\p{L}{3}/u.test(t) ? t : null; };
+// cut first: the trailing-run regex is quadratic on a line of thousands of dots (a title is at most 160 characters)
+const clean = (s) => { const t = String(s || '').slice(0, 400).replace(/^[\s:–«"“-]+|[\s.,;:–»"”-]+$/g, ''); return t.length >= 3 && t.length <= 160 && /\p{L}{3}/u.test(t) ? t : null; };
 
 function issuerOf(ls, text) {
   for (const [name, re] of ISSUERS) if (re.test(text)) return name;
@@ -212,10 +213,16 @@ function institutionOf(ls) {
     if (joined) found.push({ name: cleanOrg(`${prev} ${l}${tail}`), i });
   });
   if (!found.length) return null;
+  found.splice(50); // a real document names a few institutions; thousands of "University" lines are no document
   // a university beats one of its schools; the name that recurs ("NORTHGATE UNIVERSITY" … "the seal of Northgate
   // University") beats a stamp read once; then a clean reading beats a noisy one, a fuller name a shorter one
   const text = ` ${fold(ls.join(' '))} `;
-  const times = (s) => { const k = fold(s || ''); return k ? text.split(` ${k} `).length - 1 : 0; };
+  const counted = new Map(); // the sort compares each name many times: count it once
+  const times = (s) => {
+    const k = fold(s || '');
+    if (!counted.has(k)) counted.set(k, k ? text.split(` ${k} `).length - 1 : 0);
+    return counted.get(k);
+  };
   const main = (s) => (MAIN_INSTITUTION.test(s || '') ? 1 : 0);
   found.sort((a, b) => main(b.name) - main(a.name) || times(b.name) - times(a.name) || mixedWords(a.name) - mixedWords(b.name) ||
     (b.name || '').length - (a.name || '').length || a.i - b.i);

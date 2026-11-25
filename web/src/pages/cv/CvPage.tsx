@@ -1,7 +1,7 @@
 import { useRef, useState, type ReactNode } from 'react'
 import { Link, useNavigate, useParams } from 'react-router'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { ArrowLeft, Download, FileDown, Pencil, Plus, Printer, RefreshCw, ScanText, ShieldCheck, Trash2, X } from 'lucide-react'
+import { ArrowLeft, Download, Pencil, Plus, Printer, RefreshCw, ScanText, ShieldCheck, Trash2, X } from 'lucide-react'
 import { fmt, language, t } from '../../i18n'
 import { ApiError, api, errorMessage } from '../../lib/api'
 import { formatDate, formatDateTime, formatSize } from '../../lib/format'
@@ -12,6 +12,7 @@ import { Button, Card, EmptyState, ErrorState, Field, IconButton, Input, Loading
 import { NotFoundPage } from '../NotFoundPage'
 import { StatusBadge } from './CvListPage'
 import { CandidateDocuments } from './documents'
+import { CvExport } from './export'
 
 function Row({ label, children }: { label: string; children: ReactNode }) {
   return (
@@ -335,12 +336,7 @@ export function CvPage() {
             </Button>
             {p && (
               <>
-                <a className={buttonClass('secondary', 'sm')} href={`/api/v1/cv/candidates/${c.id}/export.docx?lang=en`}>
-                  <FileDown className="size-3.5" /> {fmt(t.cv.exportDocx, { lang: 'EN' })}
-                </a>
-                <a className={buttonClass('secondary', 'sm')} href={`/api/v1/cv/candidates/${c.id}/export.docx?lang=ru`}>
-                  <FileDown className="size-3.5" /> {fmt(t.cv.exportDocx, { lang: 'RU' })}
-                </a>
+                <CvExport id={c.id} />
                 <a className={buttonClass('secondary', 'sm')} href={`/cv/${c.id}/print`} target="_blank" rel="noopener noreferrer">
                   <Printer className="size-3.5" /> {t.cv.print}
                 </a>
@@ -417,9 +413,11 @@ export function CvPage() {
                     ) : (
                       <span className="text-muted">{t.cv.noConsentFile}</span>
                     )}
-                    <button type="button" className="text-accent hover:underline" onClick={() => consentInput.current?.click()}>
-                      {t.cv.consentFileAttach}
-                    </button>
+                    {(!c.has_consent_file || can('cv.delete')) && (
+                      <button type="button" className="text-accent hover:underline" onClick={() => consentInput.current?.click()}>
+                        {t.cv.consentFileAttach}
+                      </button>
+                    )}
                     <input
                       ref={consentInput}
                       type="file"

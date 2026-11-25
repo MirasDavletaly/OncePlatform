@@ -141,10 +141,13 @@ func serve() error {
 		Addr:              cfg.ListenAddr,
 		Handler:           router,
 		ReadHeaderTimeout: 15 * time.Second,
-		IdleTimeout:       120 * time.Second,
-		MaxHeaderBytes:    1 << 20,
-		ErrorLog:          slog.NewLogLogger(log.Handler(), slog.LevelWarn),
-		BaseContext:       func(net.Listener) context.Context { return ctx },
+		// a request body trickled byte by byte must not hold a connection forever; 20 minutes leave room for
+		// big uploads over a slow line (no WriteTimeout: MCP streams responses)
+		ReadTimeout:    20 * time.Minute,
+		IdleTimeout:    120 * time.Second,
+		MaxHeaderBytes: 1 << 20,
+		ErrorLog:       slog.NewLogLogger(log.Handler(), slog.LevelWarn),
+		BaseContext:    func(net.Listener) context.Context { return ctx },
 	}
 	errCh := make(chan error, 1)
 	go func() {

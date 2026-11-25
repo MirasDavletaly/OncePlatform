@@ -11,7 +11,8 @@ SRC=$(cd "$(dirname "$0")/../.." && pwd)
 
 docker tag onceplatform/app:latest onceplatform/app:prev
 # A failed build leaves :latest on the running image.
-docker build --build-arg VERSION="$(date +%Y.%m.%d-%H%M)" -t onceplatform/app:latest "$SRC"
+# --pull: fresh base images (Go, Alpine) with their security fixes, not the copy cached at the first build
+docker build --pull --build-arg VERSION="$(date +%Y.%m.%d-%H%M)" -t onceplatform/app:latest "$SRC"
 
 cd /srv/onceplatform
 docker compose up -d --no-deps app

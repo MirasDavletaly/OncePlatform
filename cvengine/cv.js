@@ -193,7 +193,7 @@ const EDU_LEVELS = [
   ['higher', /^(?:(?:неполное\s+)?высшее(?:\s+(?:образование|профессиональное|техническое))?|higher(?:\s+education)?|university\s+degree|жоғары(?:\s+білім)?)$/iu],
 ];
 const eduLevelOf = (s) => {
-  const t = String(s || '').replace(/\(.*?\)/g, '').replace(/[.,:;\s]+$/, '').trim();
+  const t = String(s || '').slice(0, 300).replace(/\([^()]*\)/g, '').replace(/[.,:;\s]+$/, '').trim();
   return EDU_LEVELS.find(([, re]) => re.test(t))?.[0] || null;
 };
 const SPECIALTY = /[.,;]\s*(?:specialty|speciality|major|faculty|специальность|факультет|мамандығы)\s*:?\s*/iu;
@@ -222,13 +222,14 @@ const CERT_WORD = /сертификат|certificate|certified|удостовер
 const NOT_A_TITLE = /^(?:resume|résumé|cv|curriculum\s+vitae|резюме|түйіндеме|сводка\s+навыков|summary\s+of\s+skills|personal\s+(?:information|details))$/iu;
 const PERSONAL = /born|birth|рожд|туған|\bmale\b|\bfemale\b|мужской|женский|gender|nationality|married|single|@|\d{7,}/iu;
 // (?<!\p{L}) instead of \b: \b does not see Cyrillic letters
-const ADDRESS = /street|\bst\.|avenue|\bave\.|улица|(?<!\p{L})ул\.|проспект|(?<!\p{L})пр-т|көшесі|микрорайон|(?<!\p{L})мкр|apartment|(?<!\p{L})кв\.|(?<!\p{L})г\.\s*\p{Lu}|\bcity\b|\bregion\b|област|облысы/iu;
+const ADDRESS = /street|\bst\.|avenue|\bave\.|улица|(?<!\p{L})ул\.|проспект|(?<!\p{L})пр-т|көшесі|микрорайон|(?<!\p{L})мкр|apartment|(?<!\p{L})кв\.|(?<!\p{L})г\.\s*\p{Lu}|\bcity\b|\bregion\b|област|облысы|(?<!\p{L})обл(?:\.|(?!\p{L}))|(?<!\p{L})р-н(?!\p{L})|район|ауданы/iu;
 const DATE_LINE = /^(?:\p{L}+\.?\s+)?(?:19|20)\d{2}\s*(?:[-–—]\s*(?:\p{L}+\.?\s+)?(?:(?:19|20)\d{2}|present|по\s+н\.?\s*в\.?|по\s+настоящее\s+время)?)?$/iu;
 // "Position Applied: Millwright Fitter", "Objective: Hydrotest Operator" → the title itself
 export const cleanLabel = (s) => (s ? String(s).replace(/^(?:position\s+applied(?:\s+for)?|applied\s+position|objective|desired\s+position|position|желаемая\s+должность|должность|позиция|лауазымы)\s*[:\-–]\s*/iu, '').trim() || null : s);
 export function badLabel(label, name) {
   const s = String(label || '').trim();
   if ((s.match(/\p{L}/gu) || []).length < 3) return true;
+  if (/[.!?]$/.test(s) && s.split(/\s+/).length > 6) return true; // a sentence is no job title
   if (headingOf(s) || NOT_A_TITLE.test(s) || PERSONAL.test(s) || DATE_LINE.test(s)) return true;
   if (ADDRESS.test(s) && (!isTitle(s) || /\d/.test(s))) return true; // "City Planner" is a title, "Abay street, 12" is not
   const parts = s.split(/\s*,\s*/);

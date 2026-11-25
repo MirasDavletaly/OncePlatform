@@ -32,9 +32,15 @@ func VerifyPKCE(verifier, challenge, method string) bool {
 	return subtle.ConstantTimeCompare([]byte(S256Challenge(verifier)), []byte(challenge)) == 1
 }
 
-// ValidateRedirectURI enforces the redirect URI policy: absolute https URLs,
-// or http only for loopback hosts (native/local clients). No fragments and no
-// credentials in the URL.
+// claudeHosts are the only https return addresses a client may register: the
+// portal's OAuth server exists for Claude connectors, and an open list let
+// anyone register "Claude" with their own (or a look-alike) host and ask a
+// team member for consent.
+var claudeHosts = map[string]bool{"claude.ai": true, "claude.com": true}
+
+// ValidateRedirectURI enforces the redirect URI policy: https on Claude's
+// hosts, or http only for loopback hosts (Claude Code and other local clients).
+// No fragments and no credentials in the URL.
 func ValidateRedirectURI(raw string) error {
 	if raw == "" || len(raw) > 2000 {
 		return errors.New("redirect_uri is empty or too long")
@@ -54,7 +60,10 @@ func ValidateRedirectURI(raw string) error {
 	}
 	switch u.Scheme {
 	case "https":
-		return nil
+		if claudeHosts[u.Hostname()] {
+			return nil
+		}
+		return errors.New("https redirect_uri is allowed only on claude.ai or claude.com")
 	case "http":
 		if isLoopbackHost(u.Hostname()) {
 			return nil

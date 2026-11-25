@@ -98,6 +98,14 @@ func NewService(pool *pgxpool.Pool, log *slog.Logger, storage string, maxBytes i
 			return nil, fmt.Errorf("cv storage %s: %w", d, err)
 		}
 	}
+	// leftovers of a crash or an out-of-memory kill (partial uploads, OCR pages): nothing else removes them
+	if entries, err := os.ReadDir(s.tmp); err == nil {
+		for _, e := range entries {
+			if info, err := e.Info(); err == nil && time.Since(info.ModTime()) > time.Hour {
+				_ = os.RemoveAll(filepath.Join(s.tmp, e.Name()))
+			}
+		}
+	}
 	return s, nil
 }
 
@@ -121,10 +129,13 @@ func scanCandidate(row pgx.Row) (*Candidate, error) {
 		return nil, err
 	}
 	c.Code = Code(c.Number)
+	if c.Error == processingMark { // the worker's own mark, no error
+		c.Error = ""
+	}
 	c.Profile = profile
 	c.ConsentDate = consent.Format(time.DateOnly)
 	c.HasConsentFile = c.consentStored != ""
-	c.Translations, c.TranslationStatus = translationState(translations, profile)
+	c.Translations, c.TranslationStatus = translationState(translations, profile, c.FullName)
 	return &c, nil
 }
 
@@ -209,6 +220,9 @@ func view(c *Candidate, anon bool) *Candidate {
 	v := *c
 	v.FullName, v.FileName, v.Mime, v.Size, v.ConsentNote, v.ReferredBy, v.Anonymized = "", "", "", 0, "", "", true
 	v.Profile = anonymizeProfile(c.Profile, c.FullName)
+	if v.Error != "" { // engine or OCR output may quote the CV
+		v.Error = "The CV could not be read"
+	}
 	return &v
 }
 
@@ -247,6 +261,10 @@ func anonymizeProfile(raw json.RawMessage, fullName string) json.RawMessage {
 	}
 	names := fullName
 	if b, ok := p["basics"].(map[string]any); ok {
+		// the name as parsed can differ from the candidate's name (a CV in another language, a hand edit)
+		if n, _ := b["name"].(string); n != "" {
+			names += " " + n
+		}
 		for _, k := range []string{"name", "email", "phone", "url", "profiles"} {
 			delete(b, k)
 		}
@@ -335,7 +353,9 @@ func cleanReferral(s string) (string, error) {
 }
 
 // errAlreadyUploaded is not a failure for the uploader: the file is in the portal already.
-func errAlreadyUploaded(msg string) error { return apperr.New(http.StatusConflict, "already_uploaded", msg) }
+func errAlreadyUploaded(msg string) error {
+	return apperr.New(http.StatusConflict, "already_uploaded", msg)
+}
 
 func (s *Service) parseConsent(date, note string) (time.Time, string, error) {
 	d, err := time.ParseInLocation(time.DateOnly, strings.TrimSpace(date), s.loc)
@@ -362,6 +382,28 @@ func (s *Service) CheckUpload(actor workflow.Actor, date, note, referredBy strin
 	}
 	_, err := cleanReferral(referredBy)
 	return err
+}
+
+// Upload quota per person per 24 hours (CVs and documents together): far
+// above a day's real work, it stops a script from filling the server's disk,
+// which the database shares.
+const (
+	quotaFiles = 300
+	quotaBytes = 3 << 30
+)
+
+func (s *Service) checkQuota(ctx context.Context, actor workflow.Actor) error {
+	var n, bytes int64
+	if err := s.pool.QueryRow(ctx, `SELECT count(*), coalesce(sum(size), 0) FROM (
+		SELECT size FROM candidates WHERE uploaded_by = $1 AND created_at > now() - interval '1 day'
+		UNION ALL SELECT size FROM candidate_documents WHERE uploaded_by = $1 AND created_at > now() - interval '1 day') u`,
+		actor.UserID).Scan(&n, &bytes); err != nil {
+		return err
+	}
+	if n >= quotaFiles || bytes >= quotaBytes {
+		return apperr.RateLimited(fmt.Sprintf("Upload limit reached (%d files or %d GB a day). Try again tomorrow or ask an administrator.", quotaFiles, quotaBytes>>30))
+	}
+	return nil
 }
 
 // storeFile receives a body into <root>/YYYY/MM/<name>, checks its type and
@@ -425,6 +467,9 @@ func (s *Service) Upload(ctx context.Context, actor workflow.Actor, in UploadInp
 	mime, ok := files.MimeFor(ext, false)
 	if name == "" || !ok || !cvExt[ext] {
 		return nil, apperr.New(415, "unsupported_file", "A CV must be a PDF, DOCX, TXT, PNG or JPG file")
+	}
+	if err := s.checkQuota(ctx, actor); err != nil {
+		return nil, err
 	}
 	id, err := db.NewUUID()
 	if err != nil {
@@ -593,6 +638,10 @@ func (s *Service) SetConsentFile(ctx context.Context, actor workflow.Actor, id, 
 	if err != nil {
 		return nil, err
 	}
+	// the signed consent is the proof: replacing it (the old file goes) is for roles that may delete candidates
+	if c.consentStored != "" && !actor.Can(workflow.PermCVDelete) {
+		return nil, apperr.Forbidden("A signed consent is already attached; only an administrator or a coordinator can replace it")
+	}
 	name := files.CleanFileName(fileName)
 	ext := files.Ext(name)
 	mime, ok := files.MimeFor(ext, false)
@@ -636,6 +685,13 @@ func (s *Service) Delete(ctx context.Context, actor workflow.Actor, id string) e
 		return err
 	}
 	stored := []string{c.storedName, c.consentStored}
+	// earlier CV files of this candidate, kept when a new upload replaced them
+	if rows, err := s.pool.Query(ctx, `SELECT details->>'previous_file' FROM audit_log
+		WHERE action = 'candidate.replace' AND entity_id = $1 AND details ? 'previous_file'`, id); err == nil {
+		if prev, err := pgx.CollectRows(rows, pgx.RowTo[string]); err == nil {
+			stored = append(stored, prev...)
+		}
+	}
 	err = db.InTx(ctx, s.pool, func(tx pgx.Tx) error {
 		rows, err := tx.Query(ctx, `DELETE FROM candidate_documents WHERE candidate_id = $1 RETURNING stored_name`, id)
 		if err != nil {
@@ -776,12 +832,45 @@ func (s *Service) rescan(ctx context.Context) {
 	}
 }
 
+// processingMark is kept in error while a CV or a document is being read. A
+// pending one that still has it after a restart took the process down (out of
+// memory, a crash): it fails instead of being read again on every start, so
+// one hostile file cannot keep the portal in a crash loop.
+const processingMark = "processing"
+
+// claim marks a pending CV or document as being read; false when it was
+// already being read when the portal stopped (then it is marked failed).
+func (s *Service) claim(ctx context.Context, table, id string) bool {
+	var prev string
+	if err := s.pool.QueryRow(ctx, `SELECT error FROM `+table+` WHERE id = $1 AND status = 'pending'`, id).Scan(&prev); err != nil {
+		return false
+	}
+	if prev == processingMark {
+		s.log.Warn("file skipped: its last reading did not finish", "table", table, "id", id)
+		_, _ = s.pool.Exec(ctx, `UPDATE `+table+` SET status = 'failed', error = $2, updated_at = now() WHERE id = $1 AND status = 'pending'`,
+			id, "The file could not be read: its last reading stopped the server")
+		return false
+	}
+	_, err := s.pool.Exec(ctx, `UPDATE `+table+` SET error = $2 WHERE id = $1 AND status = 'pending'`, id, processingMark)
+	return err == nil
+}
+
+// unclaim: the portal is stopping in the middle of a reading - pending again, without the mark (this was no crash).
+func (s *Service) unclaim(table, id string) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	_, _ = s.pool.Exec(ctx, `UPDATE `+table+` SET error = '' WHERE id = $1 AND status = 'pending' AND error = $2`, id, processingMark)
+}
+
 func (s *Service) process(ctx context.Context, id string) {
 	var stored, name string
 	var fresh bool // a new upload, not a new parse of a candidate's CV
 	if err := s.pool.QueryRow(ctx, `SELECT stored_name, file_name, profile IS NULL FROM candidates WHERE id = $1 AND status = 'pending'`, id).
 		Scan(&stored, &name, &fresh); err != nil {
 		return // already processed or deleted
+	}
+	if !s.claim(ctx, "candidates", id) {
+		return
 	}
 	start := time.Now()
 	text, ocr, err := extractCV(ctx, s.tmp, s.pathFor(stored), files.Ext(name))
@@ -801,7 +890,8 @@ func (s *Service) process(ctx context.Context, id string) {
 		}
 	}
 	if ctx.Err() != nil {
-		return // shutting down: stays pending
+		s.unclaim("candidates", id) // shutting down: stays pending
+		return
 	}
 	if err != nil {
 		msg := err.Error()
@@ -869,15 +959,15 @@ func (s *Service) samePerson(ctx context.Context, id string, profile json.RawMes
 // upload names one); it gets the new file, text and profile (manual edits and
 // translations of the old profile go) and the newer consent date.
 func (s *Service) replaceCV(ctx context.Context, uploadID, targetID, by, text string, ocr bool, profile json.RawMessage) error {
-	var oldStored, newStored string
+	var oldStored, newStored, uploader string
 	err := db.InTx(ctx, s.pool, func(tx pgx.Tx) error {
 		var fileName, mime, sum, note, referral string
 		var size int64
 		var consent time.Time
 		var uploadNumber, targetNumber int
-		if err := tx.QueryRow(ctx, `SELECT file_name, stored_name, mime, size, sha256, consent_date, consent_note, referred_by, number
+		if err := tx.QueryRow(ctx, `SELECT file_name, stored_name, mime, size, sha256, consent_date, consent_note, referred_by, number, uploaded_by
 			FROM candidates WHERE id = $1 AND status = 'pending' FOR UPDATE`, uploadID).
-			Scan(&fileName, &newStored, &mime, &size, &sum, &consent, &note, &referral, &uploadNumber); err != nil {
+			Scan(&fileName, &newStored, &mime, &size, &sum, &consent, &note, &referral, &uploadNumber, &uploader); err != nil {
 			return err
 		}
 		if err := tx.QueryRow(ctx, `SELECT stored_name, number FROM candidates WHERE id = $1 FOR UPDATE`, targetID).
@@ -903,12 +993,13 @@ func (s *Service) replaceCV(ctx context.Context, uploadID, targetID, by, text st
 			WHERE id = $1`, targetID, fileName, newStored, mime, size, sum, text, []byte(profile), ocr, consent, note, referral); err != nil {
 			return err
 		}
-		return audit.Write(ctx, tx, audit.Entry{Action: "candidate.replace", EntityType: "candidate", EntityID: targetID,
-			Details: map[string]any{"code": Code(targetNumber), "upload": Code(uploadNumber), "by": by}, Via: workflow.ViaSystem})
+		// the previous CV file is kept (an upload by anyone with cv.manage replaces it, and the match may be wrong):
+		// the audit entry names it and who uploaded the new one, so an administrator can put it back; deleting the
+		// candidate removes it too
+		return audit.Write(ctx, tx, audit.Entry{UserID: uploader, Action: "candidate.replace", EntityType: "candidate", EntityID: targetID,
+			Details: map[string]any{"code": Code(targetNumber), "upload": Code(uploadNumber), "by": by, "previous_file": oldStored},
+			Via:     workflow.ViaSystem})
 	})
-	if err == nil && oldStored != newStored {
-		s.removeFile(oldStored)
-	}
 	return err
 }
 

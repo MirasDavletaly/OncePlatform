@@ -44,9 +44,10 @@ services:
     volumes:
       - uploads:/data/uploads
     ports:
-      # Direct access without a domain: http://<IP>:8080 (first-time check).
-      # After the domain works over HTTPS, set HTTP_PORT_BIND=127.0.0.1:8080 in .env.
-      - "${HTTP_PORT_BIND:-8080}:8080"
+      # Only this machine by default: the app trusts proxy headers from private
+      # addresses, so a port open to the LAN would let any LAN host fake its IP.
+      # For a first check without a domain set HTTP_PORT_BIND=8080 in .env, then back.
+      - "${HTTP_PORT_BIND:-127.0.0.1:8080}:8080"
     logging: *logging
 
   caddy:

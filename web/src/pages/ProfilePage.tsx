@@ -46,6 +46,11 @@ function PasswordCard() {
       toast(t.profile.passwordChanged)
     },
   })
+  const others = useMutation({
+    mutationFn: () => api.post<{ ended: number }>('/auth/logout-others'),
+    onSuccess: (r) => toast(fmt(t.profile.loggedOutOthers, { n: r.ended })),
+    onError: (e) => toast(errorMessage(e), 'error'),
+  })
   const mismatch = repeat !== '' && next !== repeat
   const submit = (e: FormEvent) => {
     e.preventDefault()
@@ -59,18 +64,24 @@ function PasswordCard() {
           <Input id="pw-cur" type="password" autoComplete="current-password" value={cur} onChange={(e) => setCur(e.target.value)} />
         </Field>
         <Field label={t.profile.newPassword} htmlFor="pw-new" hint={t.profile.passwordHint}>
-          <Input id="pw-new" type="password" autoComplete="new-password" minLength={10} value={next} onChange={(e) => setNext(e.target.value)} />
+          <Input id="pw-new" type="password" autoComplete="new-password" minLength={8} value={next} onChange={(e) => setNext(e.target.value)} />
         </Field>
         <Field label={t.profile.repeatPassword} htmlFor="pw-rep" error={mismatch ? t.profile.passwordMismatch : undefined}>
           <Input id="pw-rep" type="password" autoComplete="new-password" value={repeat} onChange={(e) => setRepeat(e.target.value)} />
         </Field>
         {change.error && <p className="rounded-lg bg-danger-soft px-3 py-2 text-sm text-danger">{errorMessage(change.error)}</p>}
         <div className="flex justify-end">
-          <Button type="submit" variant="primary" loading={change.isPending} disabled={!cur || next.length < 10 || next !== repeat}>
+          <Button type="submit" variant="primary" loading={change.isPending} disabled={!cur || next.length < 8 || next !== repeat}>
             {t.common.save}
           </Button>
         </div>
       </form>
+      <div className="flex flex-col gap-2 border-t border-line px-5 py-4 sm:flex-row sm:items-center sm:justify-between">
+        <p className="text-[13px] text-muted">{t.profile.logoutOthersHint}</p>
+        <Button size="sm" loading={others.isPending} onClick={() => others.mutate()}>
+          {t.profile.logoutOthers}
+        </Button>
+      </div>
     </Card>
   )
 }

@@ -4,6 +4,7 @@ import (
 	"archive/zip"
 	"bytes"
 	"context"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -137,6 +138,34 @@ func TestCleanFileName(t *testing.T) {
 	long := strings.Repeat("я", 300) + ".pdf"
 	if got := CleanFileName(long); len([]rune(got)) != 200 || !strings.HasSuffix(got, ".pdf") {
 		t.Errorf("long name not truncated correctly: %d runes", len([]rune(got)))
+	}
+}
+
+// Hostile packages: deep nesting in a tiny .docx, a zip with a huge directory, a right-to-left mark in the name.
+func TestHostileFiles(t *testing.T) {
+	dir := t.TempDir()
+	deep := filepath.Join(dir, "deep.docx")
+	body := strings.Repeat("<a>", 100_000) + strings.Repeat("</a>", 100_000)
+	if err := os.WriteFile(deep, makeZip(t, map[string]string{"[Content_Types].xml": "<Types/>", "word/document.xml": body}), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := ExtractText(context.Background(), deep, "docx"); err != errTooDeep {
+		t.Errorf("deeply nested docx: %v, want errTooDeep", err)
+	}
+	parts := map[string]string{"[Content_Types].xml": "<Types/>", "word/document.xml": "<w:document/>"}
+	for i := 0; i <= maxZipEntries; i++ {
+		parts[fmt.Sprintf("x/%d", i)] = ""
+	}
+	raw := makeZip(t, parts)
+	zr, err := zip.NewReader(bytes.NewReader(raw), int64(len(raw)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := CheckContent("docx", raw[:8], zr); err != errBomb {
+		t.Errorf("a zip with %d entries: %v, want errBomb", len(parts), err)
+	}
+	if got := CleanFileName("cv‮fdp.exe"); got != "cvfdp.exe" {
+		t.Errorf("bidi mark kept: %q", got)
 	}
 }
 

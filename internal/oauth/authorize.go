@@ -108,21 +108,26 @@ func (s *Server) redirectError(w http.ResponseWriter, r *http.Request, ar *authR
 	http.Redirect(w, r, u.String(), http.StatusFound)
 }
 
+// noClaudeForRole: the recruiter works with the CV database only; MCP refuses that role anyway.
+const noClaudeForRole = "Your role works with the CV database only: connecting Claude is not available for it."
+
 // Authorize handles GET /oauth/authorize: validates the request, sends
 // anonymous users to the portal login page and shows the consent screen.
 func (s *Server) Authorize(w http.ResponseWriter, r *http.Request) {
 	ar, aerr := s.parseAuthRequest(r, r.URL.Query())
 	if aerr != nil {
-		if aerr.redirect {
-			s.redirectError(w, r, ar, aerr)
-		} else {
-			s.renderError(w, aerr.desc)
-		}
+		// shown here, never redirected: before the consent nobody has vouched for the return address,
+		// and an error redirect would make the portal an open redirect
+		s.renderError(w, aerr.desc)
 		return
 	}
 	p := auth.PrincipalFrom(r.Context())
 	if p == nil || p.Kind != "session" {
 		http.Redirect(w, r, "/login?next="+url.QueryEscape(r.URL.RequestURI()), http.StatusFound)
+		return
+	}
+	if !workflow.Can(p.User.Role, workflow.PermView) {
+		s.renderError(w, noClaudeForRole)
 		return
 	}
 	csrfToken := s.auth.CSRF.EnsureCSRFCookie(w, r, auth.CSRFBinding(p))
@@ -161,6 +166,10 @@ func (s *Server) AuthorizeSubmit(w http.ResponseWriter, r *http.Request) {
 	}
 	if !s.auth.CSRF.CheckCSRF(r, r.PostForm.Get(auth.CSRFFormField), auth.CSRFBinding(p)) {
 		s.renderError(w, "The form security check failed (CSRF). Reload the connection page and try again.")
+		return
+	}
+	if !workflow.Can(p.User.Role, workflow.PermView) {
+		s.renderError(w, noClaudeForRole)
 		return
 	}
 	ar, aerr := s.parseAuthRequest(r, r.PostForm)

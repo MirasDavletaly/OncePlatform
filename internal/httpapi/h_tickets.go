@@ -183,9 +183,9 @@ func (a *api) exportTickets(w http.ResponseWriter, r *http.Request) {
 		}
 		_ = cw.Write([]string{
 			t.Number, csvSafe(t.Title), workflow.StatusLabel(t.Status), result, csvPriorities[t.Priority],
-			fmtTime(t.Deadline), assignee, csvSafe(t.SourceURL), t.CreatedByName, fmtTime(&t.CreatedAt),
+			fmtTime(t.Deadline), csvSafe(assignee), csvSafe(t.SourceURL), csvSafe(t.CreatedByName), fmtTime(&t.CreatedAt),
 			fmtTime(&t.UpdatedAt), a.cfg.BaseURL + "/tickets/" + t.Number,
-			csvInt(t.FitScore), csvInt(t.Complexity), csvSafe(t.Market), csvInt(t.ApplicationsCount), csvAmount(t.BudgetAmount), t.Currency, csvSafe(t.Customer), t.LossReason,
+			csvInt(t.FitScore), csvInt(t.Complexity), csvSafe(t.Market), csvInt(t.ApplicationsCount), csvAmount(t.BudgetAmount), csvSafe(t.Currency), csvSafe(t.Customer), t.LossReason,
 		})
 	}
 	cw.Flush()

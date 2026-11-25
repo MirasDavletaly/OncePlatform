@@ -141,7 +141,7 @@ func (a *api) downloadAttachment(w http.ResponseWriter, r *http.Request) {
 	}
 	h.Set("Content-Type", att.Mime)
 	h.Set("Content-Disposition", cd)
-	h.Set("Cache-Control", "private, no-cache")
+	h.Set("Cache-Control", "private, no-store") // tender files stay out of the browser's disk cache
 	h.Set("X-Content-Type-Options", "nosniff")
 	http.ServeContent(w, r, "", att.CreatedAt, f)
 }

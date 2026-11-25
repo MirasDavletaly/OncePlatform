@@ -248,8 +248,11 @@ func (s *Service) Match(ctx context.Context, actor workflow.Actor, ticketID stri
 			return nil, nil, 0, err
 		}
 		// the title as it may go out anonymised: a misread title line can be the name or the address
-		byID[id] = info{Code(number), name, labelOf(profile), labelOf(anonymizeProfile(profile, name))}
-		cands = append(cands, engineCandidate{ID: id, Profile: profile})
+		anonymized := anonymizeProfile(profile, name)
+		byID[id] = info{Code(number), name, labelOf(profile), labelOf(anonymized)}
+		// scored on the anonymised profile: requirements are free text, and matching them against the real texts
+		// would tell which code has a given name or phone
+		cands = append(cands, engineCandidate{ID: id, Profile: anonymized})
 	}
 	rows.Close()
 	if err := rows.Err(); err != nil {

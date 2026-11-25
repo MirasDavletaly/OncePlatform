@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+	"unicode"
 	"unicode/utf8"
 
 	"onceplatform/internal/apperr"
@@ -80,7 +81,8 @@ func CleanFileName(name string) string {
 		name = name[i+1:]
 	}
 	name = strings.Map(func(r rune) rune {
-		if r < 0x20 || r == 0x7f || r == '"' || r == '<' || r == '>' || r == '|' || r == '*' || r == '?' || r == ':' {
+		// also invisible format characters: a right-to-left mark makes "cv‮fdp.exe" read as "cvexe.pdf"
+		if r < 0x20 || r == 0x7f || r == '"' || r == '<' || r == '>' || r == '|' || r == '*' || r == '?' || r == ':' || unicode.Is(unicode.Cf, r) {
 			return -1
 		}
 		return r
@@ -116,6 +118,13 @@ var officeMarker = map[string]string{
 	"pptx": "ppt/presentation.xml",
 }
 
+const (
+	maxZipEntries = 5000
+	maxUnpacked   = 300 << 20
+)
+
+var errBomb = apperr.New(415, "unsupported_file", "The file unpacks to an unusually large size and cannot be accepted")
+
 func errContent(ext string) error {
 	return apperr.New(415, "unsupported_file",
 		"The file content does not match the ."+ext+" extension (the file is damaged or renamed)")
@@ -136,8 +145,18 @@ func CheckContent(ext string, head []byte, zr *zip.Reader) error {
 		if !bytes.HasPrefix(head, sigZIP) || zr == nil {
 			return errContent(ext)
 		}
+		// a package that unpacks to far more than any real document, or holds a huge directory, is a zip bomb:
+		// refused here, for every caller, before anything is extracted (declared sizes are an upper bound: the
+		// zip reader refuses to read past them)
+		if len(zr.File) > maxZipEntries {
+			return errBomb
+		}
+		var unpacked uint64
 		hasTypes, hasMarker := false, false
 		for _, f := range zr.File {
+			if unpacked += f.UncompressedSize64; unpacked > maxUnpacked {
+				return errBomb
+			}
 			switch f.Name {
 			case "[Content_Types].xml":
 				hasTypes = true

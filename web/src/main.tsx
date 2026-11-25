@@ -11,8 +11,18 @@ import { ConfirmProvider, ToastProvider } from './components/ui'
 import { ApiError } from './lib/api'
 
 // A deploy removes the previous build's page chunks: an old tab that fails
-// to load one reloads itself to pick up the new build.
-window.addEventListener('vite:preloadError', () => window.location.reload())
+// to load one reloads itself to pick up the new build - at most once in 30 s,
+// so a chunk that keeps failing does not make every tab reload in a loop.
+window.addEventListener('vite:preloadError', () => {
+  try {
+    const last = Number(sessionStorage.getItem('chunk-reload') || 0)
+    if (Date.now() - last < 30_000) return
+    sessionStorage.setItem('chunk-reload', String(Date.now()))
+  } catch {
+    return // no storage: no automatic reload rather than a possible loop
+  }
+  window.location.reload()
+})
 
 // Server state is cached only in memory (TanStack Query); nothing is
 // persisted in the browser.

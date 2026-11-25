@@ -48,6 +48,9 @@ func (l *Limiter) Blocked(key string) (bool, time.Duration) {
 	return false, 0
 }
 
+// maxLimiterEntries bounds the memory a flood of distinct keys can take.
+const maxLimiterEntries = 100_000
+
 // Hit records an event for key and reports whether key is now locked.
 func (l *Limiter) Hit(key string) (bool, time.Duration) {
 	l.mu.Lock()
@@ -55,6 +58,12 @@ func (l *Limiter) Hit(key string) (bool, time.Duration) {
 	now := l.now()
 	e, ok := l.entries[key]
 	if !ok {
+		if len(l.entries) >= maxLimiterEntries {
+			l.cleanupLocked()
+		}
+		if len(l.entries) >= maxLimiterEntries { // still full: treat the new key as locked rather than grow
+			return true, l.lockout
+		}
 		e = &limiterEntry{}
 		l.entries[key] = e
 	}
@@ -88,6 +97,10 @@ func (l *Limiter) Reset(key string) {
 func (l *Limiter) Cleanup() {
 	l.mu.Lock()
 	defer l.mu.Unlock()
+	l.cleanupLocked()
+}
+
+func (l *Limiter) cleanupLocked() {
 	now := l.now()
 	cutoff := now.Add(-l.window)
 	for k, e := range l.entries {
