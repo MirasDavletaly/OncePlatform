@@ -560,6 +560,111 @@ test('layouts: numbered headings, a table read column by column, "since 2023 —
   assert.equal(parse('Ivan Petrov\n\nWORK EXPERIENCE\n2021 - 2025 Bachelor of Technology (B. Tech) — Mechanical Engineering\n').work[0]?.position?.startsWith('Tech)'), false);
 });
 
+test('layouts: a personal data table read by columns, "Career Summary" over jobs, dates with days, courses', () => {
+  const p = parse(`Personal Information
+Last name
+First name
+Nationality
+Date of Birth
+Address
+Contact details
+
+E-mail
+EDUCATION
+\tPetrov
+Ivan
+Kazakh
+05.10.1985
+Uralsk city, West Kazakhstan
++7 -700- 000 -00 -00
++7- 701 -000- 00- 00 Whats App ivan.petrov@example.com
+Higher education
+ALPHAUNI Bachelor. specialization Management.
+
+Professional Profile
+
+Experienced project manager in pre-commissioning projects.
+Good mechanical aptitude
+
+Key Skills
+Nitrogen purging
+Hydrostatic test
+
+Career Summary
+\tOil flushing
+Bolting
+
+01.01.2025 – 01.02.2025  Alpha Quest Company, Project Engineer for Beta Gas project in Karabatan.
+
+Hydro test, Pigging, Drying of 16" Pipe Lines.
+
+August 2024 – 2024 November – Company Gamma zavod, Project Engineer (Nitrogen Purge) for Delta Company.
+
+Preparation of Test packs for purging with Nitrogen.
+
+01.12.2022 – 2024 February- Epsilon Alliance - Project Manager
+
+ Managing of projects at the Karachaganak field for hydraulic testing.
+
+04.10.2019 – 01.09.2022 Zeta Oil Field Services
+
+Project Manager/ Engineering
+Managing Turn Around projects at the KTL plant.
+
+2017 – 2019
+Eta Services Central Asia
+Project Manager / Project Engineer
+Project engineer during KTL plant turn around 2017.
+
+Professional Experience Continued…
+
+2003 – 2007
+Theta Services Company Middle East Limited,  Karachaganak Aksai
+
+Nitrogen Operator 2
+Functioned as Nitrogen Pump operator.
+
+EDUCATION & TRAINING
+
+Education
+
+Courses attended
+
+PRO101 Process Nitrogen 1, July,05
+BOSIET with EBS, course date: March-2024, expiry date: March-2028
+
+Additional
+
+Languages
+Kazakh-Native
+Russian: Fluent
+English:  Above average
+`);
+  assert.equal(p.basics.name, 'Petrov Ivan');
+  assert.ok(!JSON.stringify(p).includes('1985'), 'the birth date is personal data');
+  assert.deepEqual(p.education.map((e) => [e.institution, e.area, e.degree]), [['ALPHAUNI', 'Management', 'bachelor']]);
+  assert.ok(p.certificates.some((c) => /^BOSIET/.test(c.name)) && p.certificates.some((c) => /^PRO101/.test(c.name)), JSON.stringify(p.certificates));
+  assert.ok(!p.certificates.some((c) => /^Additional$/.test(c.name)));
+  const jobs = [...p.work].sort((a, b) => a.startDate.localeCompare(b.startDate));
+  const want = [
+    ['2003-01', '2007-12', /^Nitrogen Operator 2$/, /^Theta Services Company Middle East Limited/],
+    ['2017-01', '2019-12', /^Project Manager \/ Project Engineer$/, /^Eta Services Central Asia$/],
+    ['2019-10', '2022-09', /^Project Manager\/ Engineering$/, /^Zeta Oil Field Services$/],
+    ['2022-12', '2024-02', /^Project Manager$/, /^Epsilon Alliance$/],
+    ['2024-08', '2024-11', /^Project Engineer \(Nitrogen Purge\)/, /Gamma zavod/],
+    ['2025-01', '2025-02', /^Project Engineer for Beta Gas project/, /^Alpha Quest Company$/],
+  ];
+  assert.equal(jobs.length, want.length, JSON.stringify(jobs.map((w) => [w.startDate, w.position, w.name])));
+  jobs.forEach((w, i) => {
+    const [s, e, pos, co] = want[i];
+    assert.ok(w.startDate === s && w.endDate === e && pos.test(w.position || '') && co.test(w.name || ''), JSON.stringify([w.startDate, w.endDate, w.position, w.name]));
+  });
+  assert.match(jobs[2].summary || '', /^Managing Turn Around/);
+  // a bullet with the company, a dash, the place and the title: the bullet rule first
+  const b = parse('Ivan Petrov\n\nWORK EXPERIENCE\n2003 – 2007\n• ESS / Compass Group – Nigeria/Sudan : Area Camps Manager.\nRan the camps.\n').work[0];
+  assert.deepEqual([b.position, b.name], ['Area Camps Manager', 'ESS / Compass Group']);
+});
+
 test('cli answers JSON on stdout', () => {
   const cli = fileURLToPath(new URL('./cli.mjs', import.meta.url));
   const out = JSON.parse(execFileSync(process.execPath, [cli], { input: JSON.stringify({ op: 'meta' }) }).toString());

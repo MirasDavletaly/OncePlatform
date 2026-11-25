@@ -143,6 +143,30 @@ const ORG_END = /(?:Group|Holding|Company|Corporation|Corp\.?|Industries|Industr
 const FIELD_END = /(?:field|месторождени\p{L}*|кен\s+орны)\s*$/iu;
 const TITLE_WORD = /engineer|manager|specialist|technician|operator|director|lead|head|analyst|developer|coordinator|supervisor|foreman|inspector|consultant|officer|assistant|electrician|mechanic|welder|fitter|driver|accountant|economist|lawyer|teacher|lecturer|designer|architect|administrator|advis[eo]r|planner|controller|superintendent|scheduler|estimator|surveyor|draftsman|rigger|scaffolder|painter|technologist|executive|programmer|tester|инженер|менеджер|специалист|техник|оператор|директор|руководител|начальник|аналитик|разработчик|координатор|мастер|прораб|инспектор|консультант|ассистент|электрик|электромонт|слесар|сварщик|монтажник|водител|бухгалтер|экономист|юрист|преподавател|учител|дизайнер|архитектор|администратор|геодезист|сметчик|технолог|маман|басшы/iu;
 const isCompany = (s) => !!s && (LEGAL.test(s) || ORG_END.test(s) || FIELD_END.test(s));
+// OncePlatform: words of company names that are no job titles ("Theta Services Company Middle East Limited")
+const ORG_WORD = /(?<![\p{L}])(?:services?|company|limited|group|corporation|international|holding|solutions|industries|technologies|сервис|компания|групп)(?![\p{L}])/iu;
+const orgLike = (s) => isCompany(s) || ORG_WORD.test(s) || /^(?:\p{Lu}[\p{L}&.'-]*\s+){1,5}\p{Lu}[\p{L}&.'-]*$/u.test(s);
+// a profession word that is not part of another word: "Engineering" and "техника" are no titles
+const strictTitle = (s) => isTitle(String(s || '').replace(/engineering|техника|инжиниринг/giu, ' '));
+// "Position: Lead Engineer", "Должность: «Электрик»" → the title
+const unlabel = (l) => l.replace(/^(?:position|designation|job\s+title|title|role|должность|позиция|лауазымы)\s*[:\-–]\s*/iu, '').replace(/^[«"“](.+)[»"”]$/u, '$1').trim();
+// a job title in the lines of a job: a short line with a profession word and no full stop; with lead, also the part
+// before a dash ("Supervisor for commissioning services - Supervision of …"). Never a page header ("NAME | EXECUTIVE
+// CV"), the person's name, a list ("оборудование, техника, станки") or a company.
+const titleIn = (w, lead, person) => {
+  const nameRe = person && String(person).split(/\s+/).filter((x) => x.length > 2).length
+    ? new RegExp(`(?<![\\p{L}])(?:${String(person).split(/\s+/).filter((x) => x.length > 2).map((x) => x.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('|')})(?![\\p{L}])`, 'iu') : null;
+  return (w.src || []).map((l) => String(l).trim())
+    .map((l) => unlabel(lead ? l.split(/\s+[-–—]\s+/u)[0].replace(/[.;:]$/, '') : l))
+    .find((l) => strictTitle(l) && l.split(/\s+/).length <= (lead ? 8 : 6) && !/[.;:]$/.test(l) && !/\||(?<![\p{L}])(?:cv|resume|résumé|резюме)(?![\p{L}])/iu.test(l) &&
+      (l.match(/,/g) || []).length < 2 && !isCompany(l) && !(nameRe && nameRe.test(l)) && l !== w.name && l !== w.position);
+};
+function takeTitle(w, t) {
+  w.position = t;
+  if (w.summary?.startsWith(t)) w.summary = w.summary.slice(t.length).replace(/^[\s–—-]+/u, '').trim() || undefined;
+  const nt = normTitle(t);
+  Object.assign(w, { prof: nt?.approx ? null : nt?.prof || null, sen: nt?.sen ?? null });
+}
 const isTitle = (s) => !!s && TITLE_WORD.test(s);
 // "• Maintained transformer power supply systems." is a duty, not a job title
 const isDuty = (s) => /^[•▪●·*\-–—]/.test(s) || (s.split(/\s+/).length >= 7 && /[.;]$/.test(s));
@@ -179,11 +203,23 @@ export function fixJobs(p) {
       const title = right && right.replace(/[.\s]+$/u, '').trim();
       if (title && isTitle(title)) [w.position, w.name] = [title.slice(0, 120), w.name || left.split(/\s+[–—-]\s+/u)[0].trim() || null];
     }
+    // OncePlatform: "Epsilon Alliance - Project Manager" with no company: the company and the title behind a dash (not
+    // "Слесарь – ремонтник": the other side must look like an organisation)
+    const halves = w.name || /^[•▪●·*]/u.test(w.position || '') ? [] : String(w.position || '').split(/\s+[-–—]\s+/u);
+    if (halves.length === 2) {
+      const ti = halves.findIndex((x) => strictTitle(x));
+      const org = halves[1 - ti];
+      if (ti >= 0 && !isTitle(org) && orgLike(org)) [w.position, w.name] = [halves[ti], org];
+    }
     if (w.position && isDuty(w.position)) w.position = null;
     const parts = (w.position || '').split(/\s*,\s*/);
     if (w.position && parts.length <= 3 && parts.some((x) => REGION.test(x)) && parts.every((x) => REGION.test(x) || isPlace(x) || /^\p{Lu}[\p{Ll}-]+$/u.test(x))) {
       w.location ||= locate([w.position]);
       w.position = null;
+    }
+    // OncePlatform: "Company Gamma zavod, Project Engineer for …" - the company first: the two swapped
+    if (w.position && w.name && !strictTitle(w.position) && strictTitle(w.name) && !isCompany(w.name) && !LEGAL_ONLY.test(w.name.trim())) {
+      [w.position, w.name] = [w.name.replace(/\.$/, ''), w.position];
     }
     // "Топан" + "ТОО": the company split in two
     if (w.position && LEGAL_ONLY.test((w.name || '').trim())) [w.position, w.name] = [null, `${w.name} «${w.position}»`];
@@ -203,6 +239,8 @@ export function fixJobs(p) {
       p.education.push({ institution: w.position, area: null, endDate: (w.endDate || w.startDate || '').slice(0, 4) || null });
       continue;
     }
+    // OncePlatform: a field label stuck to the company ("company, Green Spark Limited", "COMPANY")
+    if (w.name) w.name = w.name.replace(/^(?:company|employer|organi[sz]ation|компания|организация|работодатель)(?:\s*[,:]\s*|\s*$)/iu, '').trim() || null;
     if (w.position !== before) {
       const nt = normTitle(w.position);
       Object.assign(w, { prof: nt?.approx ? null : nt?.prof || null, sen: nt?.sen ?? null });
@@ -360,20 +398,27 @@ export function parse(text, ocr = false) {
   for (const w of p.work) {
     w.location = locate(w.src || []);
     // a job title outside the IT dictionary ("Электромонтажник") went into the description: a short line with a
-    // profession word and no full stop is the title
-    if (!w.position) {
-      const t = (w.src || []).map((l) => String(l).trim()).find((l) => isTitle(l) && l.split(/\s+/).length <= 6 && !/[.;:]$/.test(l) && !isCompany(l) && l !== w.name);
+    // profession word and no full stop is the title. OncePlatform: also when the "title" is the company ("Alpha
+    // Services Central Asia" over "Project Manager") and the company is empty or a place ("Karachaganak Aksai"), or a
+    // description ("Hydraulic Bolting and Tensioning, Tengiz Field." over "Mechanical Engineer")
+    const weak = !!w.position && !strictTitle(w.position);
+    const misplaced = weak && (!w.name || isPlace(w.name)) && orgLike(w.position);
+    const wordy = weak && !misplaced && (w.position.split(/\s+/).length >= 3 || /[,.]/.test(w.position));
+    if (!w.position || misplaced || wordy) {
+      const t = titleIn(w, false, p.basics?.name) || (misplaced ? titleIn(w, true, p.basics?.name) : null);
       if (t) {
-        w.position = t;
-        if (w.summary?.startsWith(t)) w.summary = w.summary.slice(t.length).trim() || undefined;
-        const nt = normTitle(t);
-        Object.assign(w, { prof: nt?.approx ? null : nt?.prof || null, sen: nt?.sen ?? null });
-      }
+        // the value in the place of the title becomes the company when there is none (a description ends with a stop)
+        if (misplaced || (wordy && !w.name && !/[.;]$/.test(w.position) && w.position.split(/\s+/).length <= 8)) w.name = w.position;
+        takeTitle(w, t);
+      } else if (misplaced && w.name && isPlace(w.name)) [w.name, w.position] = [w.position, null]; // the company, not a title
     }
-    delete w.src;
+    // OncePlatform: the company in the place of the title and the title in the place of the company ("JSC Alpha KZ,
+    // Engineer of …") - swapped before places are cut off the title
+    if (w.position && w.name && !strictTitle(w.position) && strictTitle(w.name) && isCompany(w.position) && !isCompany(w.name)) [w.position, w.name] = [w.name.replace(/\.$/, ''), w.position];
     // "Asset Data Specialist, Dubai, UAE" → "Asset Data Specialist"; a position that is only a city is no position
+    // (OncePlatform: a company with a legal form is no place: "JSC Alpha KZ")
     const parts = String(w.position || '').split(/\s*,\s*/).filter(Boolean);
-    while (parts.length && isPlace(parts[parts.length - 1])) parts.pop();
+    while (parts.length && isPlace(parts[parts.length - 1]) && !isCompany(parts[parts.length - 1])) parts.pop();
     if (parts.join(', ') !== (w.position || '')) {
       w.position = parts.join(', ') || null;
       const nt = normTitle(w.position);
@@ -381,6 +426,11 @@ export function parse(text, ocr = false) {
     }
   }
   fixJobs(p);
+  // OncePlatform: a title the layout fixes took away (a place or a company in its place) is looked for in the lines again
+  for (const w of p.work) {
+    if (!w.position) { const t = titleIn(w, false, p.basics?.name); if (t) takeTitle(w, t); }
+    delete w.src;
+  }
   fixEducation(p);
   fixCertificates(p);
   const label = cleanLabel(p.basics.label);
