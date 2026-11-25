@@ -78,12 +78,25 @@ func Code(n int) string { return fmt.Sprintf("CV-%04d", n) }
 var docTitle = regexp.MustCompile(`(?i)^\s*(персональное\s+портфолио|портфолио|резюме|түйіндеме|curriculum\s+vitae|cv|resume|résumé|personal\s+portfolio)\s*$`)
 
 // nameAfterParse: the name follows the parse unless a person typed it - taken when the stored one is empty, equal to
-// the name of the previous parse or a document title an older parser took for a name.
+// the name of the previous parse, a document title an older parser took for a name, or a headline that holds the new
+// name and more ("IVAN PETROV, B.SC MECHANICAL ENGINEER FROM SPLIT, CROATIA").
 func nameAfterParse(stored, prevParsed, parsed string) string {
-	if parsed != "" && (stored == "" || stored == prevParsed || docTitle.MatchString(stored)) {
+	if parsed == "" {
+		return stored
+	}
+	headline := strings.ContainsAny(stored, ",|") && strings.HasPrefix(strings.ToLower(nameOnly(stored)), strings.ToLower(parsed))
+	if stored == "" || stored == prevParsed || docTitle.MatchString(stored) || headline {
 		return parsed
 	}
 	return stored
+}
+
+// nameOnly is a name without what a headline adds after a comma or a bar.
+func nameOnly(s string) string {
+	if i := strings.IndexAny(s, ",|"); i > 0 {
+		return strings.TrimSpace(s[:i])
+	}
+	return s
 }
 
 // Service manages candidates and requirements.
@@ -272,7 +285,9 @@ func anonymizeProfile(raw json.RawMessage, fullName string) json.RawMessage {
 	if json.Unmarshal(raw, &p) != nil {
 		return nil
 	}
-	names := fullName
+	// a headline in the place of the name ("IVAN PETROV, B.Sc Mechanical Engineer from Split"): its words after the comma
+	// are no name - masked, they would blank "Engineer" all over the profile
+	names := nameOnly(fullName)
 	if b, ok := p["basics"].(map[string]any); ok {
 		// the name as parsed can differ from the candidate's name (a CV in another language, a hand edit)
 		if n, _ := b["name"].(string); n != "" {

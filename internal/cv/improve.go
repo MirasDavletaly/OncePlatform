@@ -3,10 +3,12 @@ package cv
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"time"
 
 	"onceplatform/internal/apperr"
 	"onceplatform/internal/audit"
+	"onceplatform/internal/files"
 	"onceplatform/internal/workflow"
 )
 
@@ -72,15 +74,26 @@ type Improvements struct {
 }
 
 type storedCV struct {
-	id, text, fullName string
-	number             int
-	ocr                bool
-	profile            json.RawMessage
-	updated            time.Time
+	id, text, fullName, stored, fileName string
+	number                               int
+	ocr                                  bool
+	profile                              json.RawMessage
+	updated                              time.Time
 }
 
-// newParse is "Parse again" on the stored text: the engine and the attached documents.
-func (s *Service) newParse(ctx context.Context, c storedCV) (json.RawMessage, error) {
+// newParse is "Parse again": the engine and the attached documents, on the stored text - read from the file again
+// when there is none (an extraction error fixed since) or it is scattered word by word (now read from the page images).
+func (s *Service) newParse(ctx context.Context, c *storedCV) (json.RawMessage, error) {
+	if c.text == "" || fragmented(c.text) {
+		text, ocr, err := extractCV(ctx, s.tmp, s.pathFor(c.stored), files.Ext(c.fileName))
+		if err != nil {
+			return nil, err
+		}
+		if letters(text) == 0 {
+			return nil, errors.New("no text was found in the file")
+		}
+		c.text, c.ocr = text, ocr
+	}
 	profile, err := s.engine.Parse(ctx, c.text, c.ocr)
 	if err != nil {
 		return nil, err
@@ -93,8 +106,8 @@ func (s *Service) newParse(ctx context.Context, c storedCV) (json.RawMessage, er
 }
 
 func (s *Service) storedCVs(ctx context.Context, ids []string) ([]storedCV, int, error) {
-	rows, err := s.pool.Query(ctx, `SELECT id, number, coalesce(cv_text, ''), ocr, coalesce(profile, 'null'), full_name, updated_at, status
-		FROM candidates WHERE $1::uuid[] IS NULL OR id = ANY($1) ORDER BY number`, ids)
+	rows, err := s.pool.Query(ctx, `SELECT id, number, coalesce(cv_text, ''), ocr, coalesce(profile, 'null'), full_name, updated_at, status,
+		stored_name, file_name FROM candidates WHERE $1::uuid[] IS NULL OR id = ANY($1) ORDER BY number`, ids)
 	if err != nil {
 		return nil, 0, err
 	}
@@ -104,10 +117,10 @@ func (s *Service) storedCVs(ctx context.Context, ids []string) ([]storedCV, int,
 	for rows.Next() {
 		var c storedCV
 		var status string
-		if err := rows.Scan(&c.id, &c.number, &c.text, &c.ocr, &c.profile, &c.fullName, &c.updated, &status); err != nil {
+		if err := rows.Scan(&c.id, &c.number, &c.text, &c.ocr, &c.profile, &c.fullName, &c.updated, &status, &c.stored, &c.fileName); err != nil {
 			return nil, 0, err
 		}
-		if status != "ready" || c.text == "" || string(c.profile) == "null" {
+		if status != "ready" || string(c.profile) == "null" {
 			other++
 			continue
 		}
@@ -126,7 +139,8 @@ func (s *Service) Improvements(ctx context.Context, actor workflow.Actor) (*Impr
 		return nil, err
 	}
 	res := &Improvements{Items: []ImprovedCV{}, Other: other}
-	for _, c := range cvs {
+	for i := range cvs {
+		c := &cvs[i]
 		profile, err := s.newParse(ctx, c)
 		if err != nil {
 			res.Other++
@@ -159,7 +173,8 @@ func (s *Service) ApplyImprovements(ctx context.Context, actor workflow.Actor, i
 		return 0, err
 	}
 	done := 0
-	for _, c := range cvs {
+	for i := range cvs {
+		c := &cvs[i]
 		profile, err := s.newParse(ctx, c)
 		if err != nil || !countsOf(profile).improves(countsOf(c.profile)) {
 			continue
@@ -171,8 +186,9 @@ func (s *Service) ApplyImprovements(ctx context.Context, actor workflow.Actor, i
 		}
 		_ = json.Unmarshal(profile, &p)
 		_ = json.Unmarshal(c.profile, &prev)
-		tag, err := s.pool.Exec(ctx, `UPDATE candidates SET profile = $2, full_name = $3, updated_at = now() WHERE id = $1 AND updated_at = $4 AND status = 'ready'`,
-			c.id, []byte(profile), nameAfterParse(c.fullName, prev.Basics.Name, truncate(p.Basics.Name, 200)), c.updated)
+		tag, err := s.pool.Exec(ctx, `UPDATE candidates SET profile = $2, full_name = $3, cv_text = $5, ocr = $6, updated_at = now()
+			WHERE id = $1 AND updated_at = $4 AND status = 'ready'`,
+			c.id, []byte(profile), nameAfterParse(c.fullName, prev.Basics.Name, truncate(p.Basics.Name, 200)), c.updated, c.text, c.ocr)
 		if err != nil {
 			return done, err
 		}

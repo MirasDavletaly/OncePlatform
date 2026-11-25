@@ -53,8 +53,9 @@ export function fixOcr(text, protect) {
 // ------------------------------------------------------------------ словари разметки
 const HEAD = {
   exp: ['Опыт работы', 'Профессиональный опыт', 'Трудовая деятельность', 'Места работы', 'Жұмыс тәжірибесі', 'Тәжірибе', 'Кәсіби тәжірибе', 'Еңбек жолы', 'Experience', 'Work experience', 'Professional experience', 'Employment history',
-    'Профессиональный путь', 'Трудовой путь', 'Руководящая деятельность'],
-  edu: ['Образование', 'Білімі', 'Білім', 'Education', 'Education & Training', 'Education and Training'],
+    'Профессиональный путь', 'Трудовой путь', 'Руководящая деятельность', 'Work History', 'Career History', 'Employment Record', 'Work Record'],
+  edu: ['Образование', 'Білімі', 'Білім', 'Education', 'Education & Training', 'Education and Training', 'Education and qualification',
+    'Education and qualifications', 'Academic qualifications'],
   skills: ['Навыки', 'Ключевые навыки', 'Профессиональные навыки', 'Технические навыки', 'Стек технологий', 'Дағдылар', 'Кәсіби дағдылар', 'Негізгі дағдылар', 'Skills', 'Key skills', 'Technical skills', 'Professional skills', 'Core skills', 'Tech stack',
     'Skills & Expertise', 'Skills and Expertise', 'Core Competencies', 'Key Competencies', 'Areas of Expertise', 'Компетенции', 'Ключевые компетенции',
     'Сводка навыков', 'Summary of Skills', 'Skills Summary', 'Профессиональные компетенции', 'Основные профессиональные компетенции'],
@@ -84,8 +85,11 @@ const memo = (fn, size = 6000) => { const m = new Map(); return (x) => { if (m.h
 export const headingOf = memo((line) => {
   // a heading is short; on a long line the trailing-run regexes below backtrack quadratically
   if (line.length > 100) return null;
+  // OncePlatform: the end of a wrapped sentence ("projects.") is no heading
+  if (/^\p{Ll}/u.test(line) && /\.\s*$/u.test(line)) return null;
   // OncePlatform: numbered headings - «5. ПРОФЕССИОНАЛЬНЫЙ ПУТЬ», «II. Education»; «Professional Experience Continued…»
-  const s = line.replace(/^(?:\d{1,2}|[IVX]{1,4})[.)]\s+/, '').replace(/\s*\(?(?:continued|cont\.|продолжение)\)?[\s.…]*$/iu, '')
+  // OncePlatform: and a line drawn after it ("Work experience_______")
+  const s = line.replace(/[_=\s]{3,}$/u, '').replace(/^(?:\d{1,2}|[IVX]{1,4})[.)]\s+/, '').replace(/\s*\(?(?:continued|cont\.|продолжение)\)?[\s.…]*$/iu, '')
     .replace(HEAD_DUR, '').replace(/[:.\s]+$/, '').trim();
   if (!s || s.length > 40 || /\d|@/.test(s) || s.split(/\s+/).length > 4) return null;
   const f = fold(s);
@@ -107,6 +111,10 @@ const LABELS = {
   gender: ['Пол', 'Жынысы', 'Gender', 'Sex'],
   marital: ['Семейное положение', 'Отбасылық жағдайы', 'Marital status'],
   nat: ['Национальность', 'Ұлты', 'Nationality'],
+  // OncePlatform: the name as a field
+  name: ['ФИО', 'Ф.И.О', 'Ф.И.О.', 'Full name', 'Name', 'Аты-жөні', 'Applicant name', 'Candidate name', 'Name of candidate'],
+  last: ['Last name', 'Surname', 'Family name', 'Фамилия', 'Тегі'],
+  first: ['First name', 'Given name', 'Имя', 'Аты'],
 };
 const labelOf = (line) => {
   const m = line.match(/^([^:]{2,28}):\s*(.*)$/);
@@ -123,8 +131,12 @@ const BIRTH_LINE = /^(?:\d{1,2}\.\d{1,2}\.)?(?:19|20)\d{2}\s*(?:г\.?\s*р\.?|г
 const MARITAL_LINE = /^(?:женат|замужем|холост|не\s+женат|не\s+замужем|разведена?|married|single|divorced)\.?$/iu;
 // «Желаемая должность и зарплата» (hh.ru), OncePlatform: «Специализация:» - должность в следующей строке
 const WANTED = /^(?:желаемая должность|desired (?:position|job)|қалаған лауазым|специализация|speciali[sz]ation)/iu;
+// OncePlatform: a name line - two to four words with capitals, initials allowed, "Jr." at the end
+const NAME_LINE = /^[\p{Lu}][\p{L}'-]+(?:\s(?:\p{Lu}\.|[\p{Lu}][\p{L}'-]+)){1,3}(?:,?\s(?:Jr|JR|Sr|SR|II|III|IV)\.?)?$/u;
+// words of a job title or a degree in a headline after the name
+const HEAD_TITLE_WORD = /(?<![\p{L}])(?:b\.?\s?sc|m\.?\s?sc|mba|ph\.?\s?d|engineer|manager|specialist|technician|supervisor|foreman|operator|director|consultant|inspector|coordinator|electrician|welder|fitter|mechanic|rigger|scaffolder|planner|surveyor|инженер|менеджер|специалист|техник|мастер|прораб|оператор|руководитель|директор|слесар|сварщик|монтажник|электрик|машинист|геодезист)/iu;
 // OncePlatform: заголовок документа над именем - не имя и не должность
-const DOC_TITLE = /^(?:персональное\s+портфолио|портфолио|резюме|түйіндеме|curriculum\s+vitae|cv|resume|résumé|personal\s+portfolio)$/iu;
+const DOC_TITLE =/^(?:персональное\s+портфолио|портфолио|резюме|түйіндеме|curriculum\s+vitae|cv|resume|résumé|personal\s+portfolio)$/iu;
 export const isSensitiveLine = (l) => { const lb = labelOf(l); return (!!lb && ['birth', 'gender', 'marital', 'nat'].includes(lb.k)) || GENDER_LINE.test(l) || BIRTH_LINE.test(l) || MARITAL_LINE.test(l); };
 
 const MONTHS = {
@@ -202,10 +214,15 @@ export function parseDate(s0, end = false) {
 const COMPANY = [
   // bounded runs and a word start: on a CV line of thousands of «"» or capitals the unbounded forms backtracked for
   // seconds (the text comes from whoever uploads the file)
-  /(?:ТОО|АО|ИП|ГУ|РГП|ЖШС|АҚ|ЖК)(?:\s+СП)?\s*[«"]([^»"«\n]{1,150})[»"]/u, // OncePlatform: «ТОО СП «…»» (совместное предприятие)
-  /[«"]([^»"«\n]{1,150})[»"]\s*(?:ЖШС|АҚ|ЖК)/u,
+  /(?:ТОО|АО|ИП|ГУ|РГП|ЖШС|АҚ|ЖК)(?:\s+СП)?\s*[«"“]([^»"”«“\n]{1,150})[»"”]/u, // OncePlatform: «ТОО СП «…»» (совместное предприятие)
+  /[«"“]([^»"”«“\n]{1,150})[»"”]\s*(?:ЖШС|АҚ|ЖК)/u,
+  // OncePlatform: a quoted name before an English legal form ("“Alpha Beta” LLP")
+  /[«"“]([^»"”«“\n]{1,150})[»"”]\s*(?:LLP|LLC|JSC|Ltd\.?|Inc\.?)(?![\p{L}])/u,
   // OncePlatform: "Engineering & Construction Company LLP" - "&" between the words
-  /(?<![\w'&.-])([A-Z][\w'&.-]{0,40}(?:\s(?:&\s)?[A-Z][\w'&.-]{0,40}){0,4})\s+(?:LLP|LLC|JSC|Ltd\.?|Inc\.?)(?![\p{L}])/u,
+  // (OncePlatform: also "… CO", "… Co.", "Corp.", "GmbH", "PLC", "B.V.", "S.A." - not the "Co" of "Co-ordinator")
+  /(?<![\w'&.-])([A-Z][\w'&.-]{0,40}(?:\s(?:&\s)?[A-Z][\w'&.-]{0,40}){0,4})\s+(?:LLP|LLC|JSC|Ltd\.?|Inc\.?|Co\.(?!\S)|CO(?![\p{L}-])|Corp\.?(?![\p{L}-])|GmbH|PLC|B\.V\.|S\.A\.)(?![\p{L}])/u,
+  // OncePlatform: a name in «» at the start of the line, without a legal form ("«Alpha Engineering» г.")
+  /^«([^»«\n]{2,80})»/u,
 ];
 const splitCompany = (s) => {
   for (const re of COMPANY) {
@@ -219,15 +236,22 @@ const splitCompany = (s) => {
   return parts.length >= 2 ? { company: parts[1], companyRaw: parts[1], rest: parts[0] } : { company: null, companyRaw: null, rest: s.trim() };
 };
 const hasCompany = (s) => COMPANY.some((re) => re.test(s));
-const POS_LABEL = /^(?:должность|позиция|лауазымы|лауазым|position|job title|title|role)\s*:\s*(.+)$/iu;
+const POS_LABEL = /^(?:должность|позиция|профессия|лауазымы|лауазым|position|job title|title|role|profession|occupation|designation)\s*:\s*(.+)$/iu;
 const BULLET = /^[-•*·▪●\u2013\u2014]/u;
 const DUR_ANY = new RegExp(`\\(?${DUR}\\)?`, 'giu');
+// OncePlatform: a duration after the period behind a dot ("Октябрь 2025 — настоящее время · 9 месяцев")
+const DUR_TAIL = new RegExp(`\\s*[·•|]\\s*${DUR}\\s*$`, 'iu');
 // должность из строки места работы: без организации, скобок, стажа и города в конце
 // («Senior Engineer, Qarjy Online LLP (Almaty)» → «Senior Engineer»; «ЖШС «…» (отрасль), Астана» → пусто)
 const posOf = (s, sc) => {
   const x = (sc?.companyRaw ? s.replace(sc.companyRaw, ' ') : s).replace(/\([^)]*\)?/g, ' ').replace(DUR_ANY, ' ');
-  const parts = x.split(/\s*[,|]\s*/).map((p) => p.replace(/^[\s;:-]+|[\s;:-]+$/g, '').trim()).filter(Boolean);
-  while (parts.length && parts[parts.length - 1].split(' ').length <= 2 && cityOf(parts[parts.length - 1]) != null) parts.pop();
+  // (OncePlatform: no "." left of "“Alpha” LLP." and no "Location: …" part; a short title loses its full stop - "HSE
+  // Engineer." - a sentence keeps it, so that cv.js knows it for a duty)
+  const parts = x.split(/\s*[,|]\s*/).map((p) => p.replace(/^[\s;:-]+|[\s;:-]+$/g, '').trim()).map((p) => (p.split(/\s+/).length <= 5 ? p.replace(/\.+$/, '') : p))
+    .filter((p) => /\p{L}/u.test(p) && !/^(?:location|place|city|address|местоположение|место|город|адрес)\s*:/iu.test(p));
+  // (OncePlatform: also "г.Атырау", "пос. Бейнеу")
+  const place = (x) => cityOf(x) != null || /^(?:г|гор|пос|п|с)\.\s*\p{Lu}[\p{L}-]+$/u.test(x);
+  while (parts.length && parts[parts.length - 1].split(' ').length <= 2 && place(parts[parts.length - 1])) parts.pop();
   return parts.join(', ');
 };
 // место работы из одной строки: с организационно-правовой формой - как posOf, без нее - «должность, организация»
@@ -536,7 +560,8 @@ const restOf = (l, m = l.match(RANGE)) => {
 const mkJob = (place, start, end, desc, src) => {
   const position = place?.position || null;
   const nt = normTitle(position);
-  const job = { name: place?.company || null, position, startDate: start, endDate: end, summary: desc.join(' ') || undefined, prof: nt?.prof || null, sen: nt?.sen ?? null };
+  // (OncePlatform: no comma at the end, no quotes around the whole name: "“Alpha Construction Company”.")
+  const job = { name: place?.company?.replace(/[\s,;:]+$/u, '').replace(/([»"”])\.$/u, '$1').replace(/^[«"“]([^«»"“”]+)[»"”]$/u, '$1') || null, position, startDate: start, endDate: end, summary: desc.join(' ') || undefined, prof: nt?.prof || null, sen: nt?.sen ?? null };
   if (nt?.approx) job.near = nt;
   job.src = src; // OncePlatform: строки этого места работы - по ним cv.js находит город и страну
   return job;
@@ -583,9 +608,13 @@ function labelledJobs(ex) {
     const start = m && parseDate(m[1].trim());
     if (!start) continue;
     const endRaw = (m[2] ?? m[3] ?? '').trim();
-    jobs.push(mkJob({ company: r.f.company, position: r.f.pos }, start, isPresent(endRaw) ? null : parseDate(endRaw, true), r.desc, r.src));
+    // OncePlatform: the company without a Kazakh legal form, as everywhere else ("ТОО "Альфа"" → "Альфа"; "LLP" stays)
+    const company = r.f.company && (/[«"“]/u.test(r.f.company) && splitCompany(r.f.company).company || r.f.company);
+    jobs.push(mkJob({ company, position: r.f.pos }, start, isPresent(endRaw) ? null : parseDate(endRaw, true), r.desc, r.src));
   }
-  return jobs.length >= 2 ? jobs : [];
+  // OncePlatform: one record is a job too when its fields say so (a form: "Period:", "Company:", "Position:")
+  const formOne = jobs.length === 1 && recs.length === 1 && recs[0].f.period && (recs[0].f.company || recs[0].f.pos);
+  return jobs.length >= 2 || formOne ? jobs : [];
 }
 
 // OncePlatform: a table of jobs read column by column (pdftotext of a Word or Writer table): all the periods, then all
@@ -625,9 +654,34 @@ const wordKey = (x) => fold(x).split(/[^\p{L}]+/u).filter(Boolean).sort().join('
 // OncePlatform: dates with the day ("04.10.2019" → "10.2019") and the year first ("2024 February" → "February 2024") in
 // the forms the parser knows
 const DAY_DATE = /(?<![\d.])\d{1,2}\.(\d{1,2})\.((?:19|20)\d{2})(?![\d.])/g;
-const YEAR_MONTH = /(?<![\p{L}\d.])((?:19|20)\d{2})\s+(\p{L}{3,9})(?![\p{L}])/gu;
-const normDates = (l) => l.replace(DAY_DATE, (a, m, y) => (Number(m) >= 1 && Number(m) <= 12 ? `${m.padStart(2, '0')}.${y}` : a))
-  .replace(YEAR_MONTH, (a, y, w) => (monthOf(w) ? `${w} ${y}` : a));
+// (not "2019 MAY 2024": the month of the next date)
+const YEAR_MONTH = /(?<![\p{L}\d.])((?:19|20)\d{2})\s+(\p{L}{3,9})(?![\p{L}])(?!\s*(?:19|20)\d{2})/gu;
+// the year word after a year ("2010-2015 гг.", "03.2015 г.", "2021 ж.") and underscores in a date line ("JUNE 2024 _Present _-1")
+// (with or without its stop: "2015 г.", "2009-2015г", "2016г-2017г")
+const YEAR_WORD = /((?:19|20)\d{2})\s?(?:гг?|жж?)(?:\.|(?=[\s,;)–—-]|$))/gu;
+const MONTHS_ONE_YEAR = /(?<![\p{L}\d])(\p{L}{3,9})\.?\s*[-–—]\s*(\p{L}{3,9})\.?\s+((?:19|20)\d{2})(?![\d])/gu;
+const normDates = (l0) => {
+  let l = l0.replace(DAY_DATE, (a, m, y) => (Number(m) >= 1 && Number(m) <= 12 ? `${m.padStart(2, '0')}.${y}` : a)).replace(YEAR_WORD, '$1')
+    // OncePlatform: a month and a year behind a hyphen: "01-2020 - 08-2024" → "01.2020 - 08.2024"
+    .replace(/(?<![\d.\-/])(0?[1-9]|1[0-2])-((?:19|20)\d{2})(?![\d])/g, (a, m, y) => `${m.padStart(2, '0')}.${y}`);
+  if (/_/.test(l) && /(?:19|20)\d{2}/.test(l) && !/@/.test(l)) l = l.replace(/\s*_+\s*/g, ' - ').replace(/(?:\s*-\s*)+\d{0,2}\s*$/, '').replace(/(?:\s*-\s*){2,}/g, ' - ').trim();
+  // two months of one year: "FEB-DEC 2024" → "FEB 2024 - DEC 2024"
+  l = l.replace(MONTHS_ONE_YEAR, (a, m1, m2, y) => (monthOf(m1) && monthOf(m2) ? `${m1} ${y} - ${m2} ${y}` : a));
+  return l.replace(YEAR_MONTH, (a, y, w) => (monthOf(w) ? `${w} ${y}` : a));
+};
+// OncePlatform: a form with labelled fields: "Start date: 09.2010 End date: 06.2014" (or "Up to present End date: -") →
+// "Period: 09.2010 - 06.2014"; "Company name: X" → "Company: X"; "Job Duties: X" → "X"; an empty "Additional info:" out
+const FORM_PERIOD = /^(?:start\s+date|date\s+from|from\s+date|дата\s+начала)\s*:\s*(.+?)\s+(?:(up\s+to\s+present|till\s+now|по\s+настоящее\s+время)\s+)?(?:end\s+date|date\s+to|to\s+date|дата\s+окончания)\s*:\s*(.*)$/iu;
+const formLine = (l) => {
+  const m = FORM_PERIOD.exec(l);
+  if (m) return `Period: ${m[1]} - ${m[2] || !/\d/.test(m[3]) ? 'present' : m[3].trim()}`;
+  const f = /^(company\s+name|name\s+of\s+(?:the\s+)?company|employer\s+name|organi[sz]ation\s+name|institution\s+name|name\s+of\s+(?:the\s+)?institution|job\s+duties|duties|responsibilities|main\s+responsibilities|additional\s+info(?:rmation)?|обязанности)\s*:\s*(.*)$/iu.exec(l);
+  if (!f) return l;
+  const v = f[2].trim();
+  if (/^additional/iu.test(f[1])) return /^[-–—]?$/.test(v) ? '' : v;
+  if (/duties|responsibilities|обязанности/iu.test(f[1])) return v;
+  return `${/institution/iu.test(f[1]) ? 'Institution' : 'Company'}: ${v}`;
+};
 // a line that starts with a period: "01.2025 – 02.2025 …", "August 2024 – …", "2017 – 2019"
 const PERIOD_LEAD = new RegExp(`^(?:(?:с|from|since)\\s+)?${DATE_SRC}\\s*${DASH}`, 'iu');
 // OncePlatform: the text after a period behind a dash ("August 2024 – November 2024 – Company …", "12.2022 – February
@@ -635,23 +689,53 @@ const PERIOD_LEAD = new RegExp(`^(?:(?:с|from|since)\\s+)?${DATE_SRC}\\s*${DASH
 // the place of work; bare years ("2014-2019 ТОО …") stay with oneLineJobs in cv.js
 const DATE_MONTH = `(?:\\d{2}[./]\\d{4}|\\d{4}-\\d{2}|${W}\\s\\d{4}(?:\\s?г\\.)?|\\d{4}\\s?ж\\.?\\s?${W})`; // DATE_SRC without a bare year
 const DASH_AFTER = new RegExp(`^((?:(?:с|from|since)\\s+)?${DATE_MONTH}\\s*${DASH}\\s*(?:${DATE_SRC}|(?:${TO}\\s+)?${PRES_SRC}))\\s*[-–—:]\\s+(?=\\p{L})`, 'iu');
-const NUM_RANGE_TEXT = new RegExp(`^(\\d{2}[./]\\d{4}\\s*${DASH}\\s*(?:\\d{2}[./]\\d{4}|(?:${TO}\\s+)?${PRES_SRC}))\\s+(?=(\\p{L}))`, 'iu');
-const rangeSep = (l) => l.replace(DASH_AFTER, '$1 | ').replace(NUM_RANGE_TEXT, (all, r, c) => (c !== c.toLowerCase() ? `${r} | ` : all));
+const NUM_RANGE_TEXT = new RegExp(`^(\\d{2}[./]\\d{4}\\s*${DASH}\\s*(?:\\d{2}[./]\\d{4}|(?:${TO}\\s+)?${PRES_SRC}))\\s+(?=(\\p{L}|[«"“]))`, 'iu');
+// (a capital or a quote: "07.2019-11.2019 «Alpha» …")
+const rangeSep = (l) => l.replace(DASH_AFTER, '$1 | ').replace(NUM_RANGE_TEXT, (all, r, c) => (c !== c.toLowerCase() || /[«"“]/u.test(c) ? `${r} | ` : all));
+// OncePlatform: a job line with years in it - the field label out ("Компания: «X» 2016-2017"), a separator after a word
+// that is no month ("г.Атырау 2009-2015" is no "month year") and around years between texts ("«X» 2016-2017 Атырау")
+const CITY_BEFORE_YEARS = new RegExp(`(\\p{L}[\\p{L}.]{2,11})\\s((?:19|20)\\d{2}\\s*${DASH}\\s*(?:(?:19|20)\\d{2}|(?:${TO}\\s+)?${PRES_SRC}))`, 'iu');
+const MID_YEARS = new RegExp(`(?<=\\S)\\s+((?:19|20)\\d{2}\\s*${DASH}\\s*(?:19|20)\\d{2})\\s+(?=[\\p{Lu}«"])`, 'u');
+const yearsLine = (l) => {
+  if (!/(?:19|20)\d{2}\s*[-–—]/u.test(l)) return l;
+  return l.replace(/^(?:компания|company|employer|работодатель|организация)\s*:\s*/iu, '')
+    .replace(CITY_BEFORE_YEARS, (a, w, r) => (monthOf(w) || /^(?:с|from|since|по|to)$/iu.test(w) ? a : `${w} | ${r}`))
+    .replace(MID_YEARS, ' | $1 | ');
+};
+// OncePlatform: a field label alone on its line and the value on the next ("Job title" / "HR Specialist", "Period" / dates,
+// "company" / name) - only a label between values: labels in a column ("Position :" / "Duration :" / …) are labelledJobs'
+const LABEL_ONLY = /^(job\s+title|position|designation|period|dates?|duration|company(?:\s+name)?|employer|organi[sz]ation|country|location|job\s+duties|duties|responsibilities|должность|период|компания|организация|страна|обязанности)\s*:?$/iu;
+const pairLabels = (ls) => {
+  for (let i = 0; i < ls.length - 1; i += 1) {
+    if (LABEL_ONLY.test(ls[i]) && !LABEL_ONLY.test(ls[i - 1] || '') && ls[i + 1] && !LABEL_ONLY.test(ls[i + 1]) && !headingOf(ls[i + 1])) {
+      ls[i] = formLine(`${ls[i].replace(/\s*:$/, '')}: ${ls[i + 1]}`);
+      ls[i + 1] = '';
+    }
+  }
+  return ls;
+};
 
 // OncePlatform: "Last name / First name / Nationality / …" in a column and the values under it in the same order (a
 // table read column by column): the name is the first values. Returns the name and the lines it used, or null.
 const NAME_PART = /^(?:last\s+name|surname|family\s+name|фамилия|тегі|first\s+name|given\s+name|имя|аты|middle\s+name|patronymic|отчество|әкесінің\s+аты)$/iu;
 const PERSONAL_LABEL = /^(?:nationality|citizenship|date\s+of\s+birth|birth\s*date|place\s+of\s+birth|address|contact\s+details|contacts?|phone|mobile|e-?mail|marital\s+status|gender|гражданство|национальность|дата\s+рождения|место\s+рождения|адрес|контакты|телефон|почта|семейное\s+положение|пол)$/iu;
+// a full name label alone: "Ф.И.О.:" over "Дата рождения:" … and the full name under them
+const FULL_NAME_LABEL = /^(?:ф\.?\s?и\.?\s?о\.?|full\s+name|аты-жөні|name)$/iu;
 function columnName(ls) {
   const clean = (l) => String(l || '').replace(/[:\s]+$/, '').trim();
-  const i = ls.findIndex((l, k) => NAME_PART.test(clean(l)) && NAME_PART.test(clean(ls[k + 1])));
+  const isName = (l) => NAME_PART.test(clean(l)) || FULL_NAME_LABEL.test(clean(l));
+  const isLabel = (l) => isName(l) || PERSONAL_LABEL.test(clean(l));
+  const i = ls.findIndex((l, k) => isName(l) && isLabel(ls[k + 1]));
   if (i < 0) return null;
   let n = 0;
-  while (NAME_PART.test(clean(ls[i + n]))) n += 1;
+  while (isName(ls[i + n])) n += 1;
+  const full = FULL_NAME_LABEL.test(clean(ls[i]));
+  if (full ? n !== 1 : n < 2) return null;
   let j = i + n;
-  while (j < ls.length && (!clean(ls[j]) || PERSONAL_LABEL.test(clean(ls[j])) || headingOf(ls[j]))) j += 1;
+  while (j < ls.length && (!clean(ls[j]) || isLabel(ls[j]) || headingOf(ls[j]))) j += 1;
   const vals = ls.slice(j, j + n).map(clean);
-  if (vals.length < n || !vals.every((v) => /^\p{L}[\p{L}'-]{1,30}$/u.test(v))) return null;
+  const ok = full ? /^\p{L}[\p{L}'-]+(?:\s\p{L}[\p{L}'-]+){1,3}$/u.test(vals[0] || '') : vals.length === n && vals.every((v) => /^\p{L}[\p{L}'-]{1,30}$/u.test(v));
+  if (!ok) return null;
   return { name: vals.join(' '), used: [...Array(n).keys()].flatMap((x) => [i + x, j + x]) };
 }
 
@@ -659,18 +743,36 @@ export function parseResume(text0, { matcher, protect, ocr = false } = {}) {
   const t0 = typeof performance !== 'undefined' ? performance.now() : Date.now();
   // глифы без кода Unicode в текстовом слое PDF (область частного использования: потерянные тире, скобки, маркеры списка) - пробел
   const text = (ocr ? fixOcr(text0, protect) : text0).replace(/[-]/gu, ' ');
-  const lines = text.split(/\r?\n/).map((l) => normDates(l.replace(/\s+/g, ' ').trim()));
+  const lines = pairLabels(text.split(/\r?\n/).map((l) => formLine(normDates(l.replace(/\s+/g, ' ').trim()))));
   const col = columnName(lines);
   if (col) for (const k of col.used) lines[k] = '';
   // разделы; OncePlatform: по кускам между заголовками - кусок «Career Summary» с периодами работы это опыт работы
-  const chunks = [{ k: 'head', lines: [] }];
-  for (const l of lines) {
-    const h = headingOf(l);
-    if (h) chunks.push({ k: h, head: l, lines: [] });
-    else if (l) chunks[chunks.length - 1].lines.push(l);
+  const chunks = [{ k: 'head', head: '', lines: [] }];
+  for (let i = 0; i < lines.length; i += 1) {
+    const l = lines[i];
+    let h = headingOf(l);
+    // OncePlatform: a heading over two lines ("PROFESSIONAL" / "SUMMARY")
+    if (!h && /^\p{Lu}[\p{Lu}&]{2,20}$/u.test(l) && lines[i + 1] && headingOf(`${l} ${lines[i + 1]}`)) { h = headingOf(`${l} ${lines[i + 1]}`); i += 1; }
+    if (h) { chunks.push({ k: h, head: l, lines: [] }); continue; }
+    // OncePlatform: a heading and its first line behind a colon ("Опыт работы: 2015-2017 …", "Образование: колледж"); in a
+    // job ("Skills: welding") only the big sections start there
+    const c = l.indexOf(':');
+    let ih = c > 2 && c < 40 && l.slice(c + 1).trim() ? headingOf(l.slice(0, c)) : null;
+    // "Objective: Hydrotest Operator" in the header is the job title, not a section
+    if (ih === 'summary' && chunks.length === 1 && titleLike(l.slice(c + 1).trim())) ih = null;
+    if (ih && (['exp', 'edu', 'summary', 'langs'].includes(ih) || !['exp', 'projects'].includes(chunks[chunks.length - 1].k))) {
+      chunks.push({ k: ih, head: l.slice(0, c), lines: [l.slice(c + 1).trim()] });
+      continue;
+    }
+    if (l) chunks[chunks.length - 1].lines.push(l);
   }
   // only a "career" heading: a summary or a profile with dates in its text stays what it is
   for (const c of chunks) if (c.k === 'summary' && /career|карьер/iu.test(c.head) && c.lines.filter((l) => PERIOD_LEAD.test(l)).length >= 2) c.k = 'exp';
+  // OncePlatform: jobs without an experience heading (hh.ru exports, periods right under the name): from the first period on
+  if (!chunks.some((c) => c.k === 'exp')) {
+    const c = chunks.find((x) => ['head', 'summary', 'other'].includes(x.k) && x.lines.filter((l) => PERIOD_LEAD.test(l)).length >= 2);
+    if (c) chunks.splice(chunks.indexOf(c) + 1, 0, { k: 'exp', head: '', lines: c.lines.splice(c.lines.findIndex((l) => PERIOD_LEAD.test(l))) });
+  }
   const sec = { head: [] };
   const found = [];
   // повторный заголовок продолжает свой раздел: «Ключевые навыки» … «Навыки» (hh.ru)
@@ -692,6 +794,14 @@ export function parseResume(text0, { matcher, protect, ocr = false } = {}) {
   const ph = text.match(PHONE);
   if (ph) B.phone = `+7 ${ph[1]} ${ph[2]} ${ph[3]} ${ph[4]}`;
   const plain = [];
+  // OncePlatform: the name as a field ("Name: X", "Ф.И.О: X", "Last name: X" + "First name: Y"), also in the personal data
+  // section; a value of one to five words of letters
+  const fieldName = {};
+  for (const l of [...headLines, ...(sec.other || [])]) {
+    const lb = labelOf(l);
+    if (lb && ['name', 'last', 'first'].includes(lb.k) && /^\p{L}[\p{L}.'\s-]{1,60}$/u.test(lb.v) && lb.v.split(/\s+/).length <= 5) fieldName[lb.k] ||= lb.v.trim();
+  }
+  const labelledName = fieldName.name || [fieldName.last, fieldName.first].filter(Boolean).join(' ') || null;
   for (const l of headLines) {
     const lb = labelOf(l);
     if (lb) {
@@ -705,19 +815,40 @@ export function parseResume(text0, { matcher, protect, ocr = false } = {}) {
     if (GENDER_LINE.test(l)) { const [g, age] = l.split(/\s*,\s*/); out.meta.sensitive.gender = g; out.meta.sensitive.birthDate = age; continue; }
     if (BIRTH_LINE.test(l)) { out.meta.sensitive.birthDate = l; continue; }
     if (MARITAL_LINE.test(l)) { out.meta.sensitive.marital = l; continue; }
-    if (EMAIL.test(l) || PHONE.test(l)) { if (B.location.cityId == null) { const c = cityOf(l); if (c != null) { B.location.cityId = c; B.location.city = CITIES[c].ru; } } continue; }
+    if (EMAIL.test(l) || PHONE.test(l)) {
+      if (B.location.cityId == null) { const c = cityOf(l); if (c != null) { B.location.cityId = c; B.location.city = CITIES[c].ru; } }
+      // OncePlatform: "Name | City, Country | phone | e-mail" - the name in front of the contacts
+      const seg = l.split(/\s+[|•·]\s+/u)[0];
+      if (seg !== l && !EMAIL.test(seg) && !PHONE.test(seg)) plain.push(seg);
+      continue;
+    }
     plain.push(l);
   }
   // OncePlatform: инициалы («Aigerim K. Nurlanova»), до четырех слов и «Jr.» в конце; без такой строки - первая строка
   // одним словом заглавными («IVANPETROV»: пробел потерян в PDF), если это не должность. Заголовок документа
   // («ПЕРСОНАЛЬНОЕ ПОРТФОЛИО») - не имя.
-  let nameIdx = plain.findIndex((l) => /^[\p{Lu}][\p{L}'-]+(?:\s(?:\p{Lu}\.|[\p{Lu}][\p{L}'-]+)){1,3}(?:,?\s(?:Jr|JR|Sr|SR|II|III|IV)\.?)?$/u.test(l) && !normTitle(l)?.prof && !DOC_TITLE.test(l));
+  let nameIdx = plain.findIndex((l) => NAME_LINE.test(l) && !normTitle(l)?.prof && !DOC_TITLE.test(l));
   if (nameIdx < 0 && /^\p{Lu}{6,30}$/u.test(plain[0] || '') && !normTitle(plain[0])?.prof && !/^(?:RESUME|CURRICULUM|PROFILE|РЕЗЮМЕ)$|(?:ER|OR|IST|IAN|ANT|MAN|ИК|ЕР|ОР)$/u.test(plain[0])) nameIdx = 0;
+  // OncePlatform: a headline "IVAN PETROV, B.Sc Mechanical Engineer from Split, Croatia": the name before the comma, the title
+  // after it without the degree and the place
+  let headTitle = null;
+  if (nameIdx < 0 && !col && !labelledName) {
+    for (const [i, l] of plain.slice(0, 3).entries()) {
+      const m = /^([^,]{3,60}),\s*(.+)$/u.exec(l);
+      if (!m || !NAME_LINE.test(m[1]) || normTitle(m[1])?.prof || DOC_TITLE.test(m[1]) || !HEAD_TITLE_WORD.test(m[2])) continue;
+      nameIdx = i;
+      plain[i] = m[1].trim();
+      headTitle = m[2].replace(/(?<![\p{L}])(?:b\.?\s?sc|m\.?\s?sc|b\.?\s?eng|m\.?\s?eng|b\.?\s?a|m\.?\s?a|mba|ph\.?\s?d)\.?(?![\p{L}])\s*/giu, '')
+        .replace(/\s+(?:from|based\s+in|из)\s+.*$/iu, '').replace(/^[\s,–—-]+|[\s,–—-]+$/gu, '').trim() || null;
+      break;
+    }
+  }
   if (col) B.name = col.name;
+  else if (labelledName) B.name = labelledName;
   else if (nameIdx >= 0) B.name = plain[nameIdx];
   else out.meta.warnings.push('name');
   const wi = plain.findIndex((l) => WANTED.test(l));
-  const labelLine = (wi >= 0 && plain[wi + 1]) || plain.find((l, i) => i !== nameIdx && normTitle(l)?.prof) || plain.find((l, i) => i !== nameIdx && !l.includes(':')) || plain.find((l, i) => i !== nameIdx);
+  const labelLine = headTitle || (wi >= 0 && plain[wi + 1]) || plain.find((l, i) => i !== nameIdx && normTitle(l)?.prof) || plain.find((l, i) => i !== nameIdx && !l.includes(':')) || plain.find((l, i) => i !== nameIdx);
   if (labelLine) { B.label = labelLine.replace(BULLET, '').trim(); out.meta.title = normTitle(B.label); }
   if (B.location.cityId == null) { for (const l of headLines) { const c = cityOf(l); if (c != null) { B.location.cityId = c; B.location.city = CITIES[c].ru; break; } } }
   // опыт работы
@@ -726,11 +857,15 @@ export function parseResume(text0, { matcher, protect, ocr = false } = {}) {
   // OncePlatform: contacts and the name again (a signature at the end) are no part of a section
   const nameKey = B.name && wordKey(B.name);
   for (const k of Object.keys(sec)) if (k !== 'head') sec[k] = sec[k].filter((l) => !EMAIL.test(l) && !PHONE.test(l) && !/_{4,}/.test(l) && !(nameKey && wordKey(l) === nameKey));
-  let ex = joinRanges((sec.exp || []).map((l) => sinceLine(leadRange(rangeSep(monthYears(l)))))).filter((l) => !DURATION.test(l));
+  let ex = joinRanges((sec.exp || []).map((l) => sinceLine(leadRange(rangeSep(yearsLine(monthYears(l.replace(DUR_TAIL, '')))))))).filter((l) => !DURATION.test(l));
   const recs = labelledJobs(ex);
   out.work.push(...recs);
   const cols = recs.length ? null : columnJobs(ex);
   if (cols) { out.work.push(...cols.jobs); ex = [...ex.slice(0, cols.from), ...ex.slice(cols.to)]; }
+  // OncePlatform: the same period again under the header ("Nov 2017 – Sep 2019" / title / company / "November 2017 –
+  // September 2019") is no new job
+  const spanOf = (l) => { const m = l.match(RANGE); return m && `${parseDate(m[1].trim())}|${parseDate((m[2] ?? m[3] ?? '').trim(), true)}`; };
+  ex = ex.filter((l, i) => !(spanOf(l) && !restOf(l) && ex.slice(Math.max(0, i - 3), i).some((p) => spanOf(p) === spanOf(l))));
   // «Position, Company LLP (City)» над строкой периода: так устроено все резюме, если перед первым периодом
   // стоит строка с организацией, а сразу после него организации и «Должность: …» нет
   // (строка организации прямо перед следующим периодом - это уже следующее место работы)
@@ -748,10 +883,37 @@ export function parseResume(text0, { matcher, protect, ocr = false } = {}) {
   // строка должности над строкой организации («Asset Data Engineer» / «Caspian Energy Services LLP, Atyrau» / период)
   const titleLine = (l) => !!l && !RANGE.test(l) && !BULLET.test(l) && !/[.;:!?]$/.test(l) && l.split(/\s+/).length <= 7 && !hasCompany(l) && !DURATION.test(l);
   const titleAbove = (i) => (before && i >= 2 && hasCompany(ex[i - 1]) && titleLine(ex[i - 2]) ? ex[i - 2] : null);
+  // OncePlatform: the company two lines up, the title right above: "Alpha Build LLP" / "Engineer Technician" / period (a
+  // company without a legal form needs a title word in the line under it and none in its own)
+  // (a name: every word with a capital, a figure or a quote, short joining words aside - not a sentence)
+  const orgName = (l) => !!l && l.split(/\s+/).length <= 7 && !/[.;:!?]$/.test(l) && !BULLET.test(l) &&
+    l.split(/\s+/).every((w) => /^[\p{Lu}\d«"“(&]/u.test(w) || /^(?:of|and|for|the|de|и|в)$/u.test(w));
+  const coAbove2 = (i) => before && i >= 2 && !RANGE.test(ex[i - 2]) && !RANGE.test(ex[i - 1]) && titleLine(ex[i - 1]) && !/[,|]/.test(ex[i - 1]) &&
+    HEAD_TITLE_WORD.test(ex[i - 1]) && (hasCompany(ex[i - 2]) || (orgName(ex[i - 2]) && !HEAD_TITLE_WORD.test(ex[i - 2])));
+  // OncePlatform: the title above each period (the first one too) and the company under it: "SITE ENGINEER" / "MARCH
+  // 2019 - MAY 2024" / "GAMMA CONSTRUCTION LLC"
+  const coLine = (l) => !!l && !RANGE.test(l) && !BULLET.test(l) && (!/[.;!?]$/.test(l) || /(?:ltd|inc|co|corp|llc|llp|jsc)\.$/iu.test(l)) && l.split(/\s+/).length <= 10;
+  const tAbove = !before && periods.length >= 2 && periods.every((k) => k > 0 && titleLine(ex[k - 1]) && !LABEL_ONLY.test(ex[k - 1]) && !restOf(ex[k]) && coLine(ex[k + 1]) && !LABEL_ONLY.test(ex[k + 1]));
   // OncePlatform: организация строкой над «period Title» («Alpha LLP» / «Sept 2020 – Present | Contracts Manager»), если
   // под периодом организации нет
   const coBelow = (k) => !!ex[k + 1] && !RANGE.test(ex[k + 1]) && hasCompany(ex[k + 1]);
   const coAbove = (k) => k > 0 && !!ex[k] && hasCompany(ex[k - 1]) && !RANGE.test(ex[k - 1]) && !!restOf(ex[k]) && !hasCompany(restOf(ex[k])) && !coBelow(k);
+  // OncePlatform: a stacked header under the period - the company, its town and country on a line or three, then the
+  // title (wrapped over two lines at most): "Alpha Build" / "Kazan, Russian" / "Federation" / "Chief Engineer"
+  // (the company line may end with its town and a comma or a full stop: "Sigma, Novy Urengoy, Rus.")
+  // (or "Company A.Ş.", "Alpha B.V."; no label: "Key Responsibilities")
+  const stackHead = (l) => !!l && !HEAD_TITLE_WORD.test(l) && !/^(?:key\s+)?(?:responsibilit|duties|tasks|achievements|обязанност|достижени|функци)/iu.test(l) &&
+    (orgName(l) || ((l.includes(',') || /(?:\p{L}\.){2,}$/u.test(l)) && orgName(l.replace(/\.$/, ''))));
+  const stackCo = (l) => (hasCompany(l) && splitCompany(l).company) || l.split(',')[0].trim();
+  const stackTitle = (i) => {
+    if (!stackHead(ex[i + 1])) return null;
+    for (let j = i + 2; j <= i + 5 && j < ex.length; j += 1) {
+      const l = ex[j];
+      if (RANGE.test(l) || BULLET.test(l) || /[.;:!?]$/.test(l) || l.split(/\s+/).length > 5) return null;
+      if (HEAD_TITLE_WORD.test(l) && titleLine(l)) return j;
+    }
+    return null;
+  };
   for (let i = 0; i < ex.length; i += 1) {
     if (recs.length) break; // записи с подписями полей уже дали места работы
     const m = ex[i].match(RANGE);
@@ -763,8 +925,22 @@ export function parseResume(text0, { matcher, protect, ocr = false } = {}) {
     const rest = restOf(ex[i], m);
     let place = rest ? placeOf(rest) : null;
     let descFrom = i + 1;
+    // OncePlatform: "period – Company" and the title on the next line ("01.2020 - 08.2024 - Alpha" / "Rigger Grade 5")
+    if (place && !before && !hasCompany(rest) && !/[,|]/.test(rest) && !HEAD_TITLE_WORD.test(rest) && !normTitle(rest)?.prof && !(cityOf(rest) != null && rest.split(/\s+/).length <= 2) &&
+      titleLine(ex[i + 1]) && HEAD_TITLE_WORD.test(ex[i + 1])) {
+      place = { company: rest, position: ex[i + 1] };
+      descFrom = i + 2;
+    }
     const lead = [];
-    if (place && !place.company && coBelow(i)) {
+    // OncePlatform: "Company … 2009-2015" and "Должность: …" on the next line
+    if (place && (!place.position || !HEAD_TITLE_WORD.test(place.position)) && POS_LABEL.test(ex[i + 1] || '')) {
+      place.position = ex[i + 1].match(POS_LABEL)[1].replace(/[.;\s]+$/u, '').trim();
+      descFrom = i + 2;
+    }
+    if (tAbove) {
+      place = { position: ex[i - 1], company: splitCompany(ex[i + 1]).company && hasCompany(ex[i + 1]) ? splitCompany(ex[i + 1]).company : ex[i + 1] };
+      descFrom = i + 2;
+    } else if (place && !place.company && coBelow(i)) {
       // OncePlatform: «Title | period», организация следующей строкой («Alpha LLP», «Beta LLP — project, City»)
       const sc = splitCompany(ex[i + 1]);
       place.company = sc.company;
@@ -776,6 +952,7 @@ export function parseResume(text0, { matcher, protect, ocr = false } = {}) {
       if (i > 0 && !RANGE.test(ex[i - 1])) place = placeOf(ex[i - 1]);
       const above = titleAbove(i);
       if (above && place && (!place.position || place.position.split(/\s+/).length <= 2) && !normTitle(place.position)?.prof) place.position = above;
+      else if (!above && coAbove2(i)) place = { company: (hasCompany(ex[i - 2]) && splitCompany(ex[i - 2]).company) || ex[i - 2], position: ex[i - 1] };
     } else if (!rest) {
       // строки места работы после периода: «Должность» и «ТОО «…»», «ЖШС «…»» и «Лауазымы: …»,
       // «ТОО «…»» / город / отрасль / должность (hh.ru)
@@ -785,27 +962,72 @@ export function parseResume(text0, { matcher, protect, ocr = false } = {}) {
       const jl = near.find((j) => POS_LABEL.test(ex[j]));
       if (jc != null || jl != null) {
         const first = Math.min(...[jc, jl].filter((x) => x != null));
-        const jp = near[0] < first ? near[0] : null; // должность строкой перед организацией
-        const jt = jl == null && jp == null ? near.find((j) => j > first && normTitle(ex[j])?.prof) : undefined; // hh.ru
+        // (OncePlatform: a title line, not a sentence of the description: "Wide professional experience with …")
+        const j0 = near[0] < first ? near[0] : null;
+        const jp = j0 != null && titleLine(ex[j0]) ? j0 : null; // должность строкой перед организацией
+        // (OncePlatform: or a title line under the company - "HSE Engineer." - over what is left of the company line)
+        const titleUnder = (l) => titleLine(l.replace(/\.$/, '')) && (normTitle(l)?.prof || HEAD_TITLE_WORD.test(l));
+        const jt = jl == null && jp == null ? near.find((j) => j > first && titleUnder(ex[j])) : undefined; // hh.ru
         const sc = jc != null ? splitCompany(ex[jc]) : { company: null };
-        const position = (jl != null ? ex[jl].match(POS_LABEL)[1].trim() : '') || (jp != null ? posOf(ex[jp]) : '') || (jc != null ? posOf(ex[jc], sc) : '') || (jt != null ? posOf(ex[jt]) : '');
-        place = { company: sc.company, position };
+        const inCo = jc != null ? posOf(ex[jc], sc) : '';
+        const position = (jl != null ? ex[jl].match(POS_LABEL)[1].trim() : '') || (jp != null ? posOf(ex[jp]) : '') || (titleUnder(inCo) ? inCo : '') || (jt != null ? posOf(ex[jt]) : '') || inCo;
+        // OncePlatform: the line before "Position: …" with no legal form is the company ("JSC"Alpha" (Pipelines)" / "Position: …")
+        place = { company: sc.company || (jl != null && jc == null && j0 != null ? splitCompany(ex[j0]).company || ex[j0] : null), position };
         descFrom = Math.max(...[jc, jl, jp, jt].filter((x) => x != null)) + 1;
+      } else if (stackTitle(i) != null) {
+        const jt = stackTitle(i);
+        const parts = ex[jt].split(/\s*,\s*/); // "Serbia, Chief Engineer": the country before the title
+        const t = parts.slice(parts.findIndex((x) => HEAD_TITLE_WORD.test(x))).join(', ');
+        const wrap = parts.length === 1 && !/\s/.test(t) && jt - 1 > i + 1 && /^\p{Lu}\p{Ll}+$/u.test(ex[jt - 1]) && cityOf(ex[jt - 1]) == null;
+        place = { company: stackCo(ex[i + 1]), position: wrap ? `${ex[jt - 1]} ${t}` : t };
+        descFrom = jt + 1;
+      } else if (titleLine(ex[i + 1]) && HEAD_TITLE_WORD.test(ex[i + 1]) && stackHead(ex[i + 2])) {
+        // the title, then the company with no legal form: "Project Manager" / "Alpha Beta Company, Atyrau, Kazakhstan"
+        place = { position: ex[i + 1], company: stackCo(ex[i + 2]) };
+        descFrom = i + 3;
+      } else if (/,$/.test(ex[i + 1] || '') && stackHead(ex[i + 1])) {
+        // the same header without a title line: "Alpha, Kazan," - the company and its town, no title
+        place = { company: stackCo(ex[i + 1]), position: null };
+        descFrom = i + 2;
       } else if (ex[i + 1] && !RANGE.test(ex[i + 1])) { place = placeOf(ex[i + 1]); descFrom = i + 2; }
     }
     const desc = lead;
-    for (let j = descFrom; j < ex.length && !RANGE.test(ex[j]) && !(before && RANGE.test(ex[j + 1] || '')) && !(RANGE.test(ex[j + 2] || '') && titleAbove(j + 2) === ex[j]) && !coAbove(j + 1); j += 1) desc.push(ex[j]);
+    for (let j = descFrom; j < ex.length && !RANGE.test(ex[j]) && !((before || tAbove) && RANGE.test(ex[j + 1] || '')) && !(RANGE.test(ex[j + 2] || '') && (titleAbove(j + 2) === ex[j] || coAbove2(j + 2))) && !coAbove(j + 1); j += 1) desc.push(ex[j]);
     // строки этого места работы: шапка, период, описание
     let k = i + 1;
     while (k < ex.length && !RANGE.test(ex[k])) k += 1;
-    if ((before || coAbove(k)) && k < ex.length) k -= 1;
-    const from = (before && i > 0 && !RANGE.test(ex[i - 1])) || coAbove(i) ? i - 1 : i;
+    if ((before || tAbove || coAbove(k)) && k < ex.length) k -= coAbove2(k) ? 2 : 1;
+    const from = coAbove2(i) ? i - 2 : ((before || tAbove) && i > 0 && !RANGE.test(ex[i - 1])) || coAbove(i) ? i - 1 : i;
     out.work.push(mkJob(place, start, end, desc, ex.slice(from, Math.max(from + 1, k))));
   }
   // образование: год окончания - последний год строки («2017 - Университет», «2016-2020 жж. Университет»,
   // «University, Almaty, 2014 - 2018», «…, 2016 -» / «2018»); год отдельной строкой - название в следующей (hh.ru)
   const ed = (sec.edu || []).map((l) => l.replace(/(?<!\d)((?:19|20)\d{2})((?:19|20)\d{2})(?!\d)/g, '$1 $2')); // «20102014»: тире потеряно
-  for (let i = 0; i < ed.length; i += 1) {
+  // OncePlatform: education as a form - "Period: …" starts a record, then "Institution: …", "Degree: …", "Specialty: …"
+  const edForm = ed.some((l) => /^institution\s*:/iu.test(l));
+  if (edForm) {
+    let cur = null;
+    for (const l of ed) {
+      const m = /^([\p{L} ]{2,30}?)\s*:\s*(.*)$/u.exec(l);
+      if (!m) continue;
+      const k = m[1].trim().toLowerCase();
+      const v = m[2].trim();
+      if (k === 'period') {
+        const ys = v.match(/(?:19|20)\d{2}/g) || [];
+        cur = { institution: '', area: null, endDate: /present|настоящ/iu.test(v) || ys.length < 2 ? null : ys[ys.length - 1] };
+        out.education.push(cur);
+      } else if (!cur || !v || /^[-–—]$/.test(v)) continue;
+      else if (k === 'institution') cur.institution = v;
+      else if (/^(?:specialty|speciality|specialization|major|faculty|field\s+of\s+study|специальность|факультет|направление)$/u.test(k)) cur.area = v;
+      else if (/^(?:qualification|квалификация)$/u.test(k) && !cur.area) cur.area = v;
+      else if (/^(?:degree|степень)$/u.test(k)) {
+        const d = /bachelor|бакалавр/iu.test(v) ? 'bachelor' : /master|магистр/iu.test(v) ? 'master' : /ph\.?d|doctor|кандидат/iu.test(v) ? 'phd' : null;
+        if (d) cur.degree = d;
+      }
+    }
+    out.education = out.education.filter((e) => e.institution);
+  }
+  for (let i = 0; i < (edForm ? 0 : ed.length); i += 1) {
     let l = ed[i];
     if (YEAR_DASH_END.test(l) && YEAR_START.test(ed[i + 1] || '')) { l = `${l} ${ed[i + 1]}`; i += 1; }
     const ys = l.match(YEARS);
@@ -817,6 +1039,20 @@ export function parseResume(text0, { matcher, protect, ocr = false } = {}) {
       const d2 = /^[•▪●·*–-]?\s*(bachelor|master|бакалавр|магистр)\p{L}*\s*[–—-]\s*([^–—:]+?)\s*[–—-]\s*([^–—:]+?)\.?$/iu.exec(l);
       if (d1 && !/course|курс|certif|сертификат/iu.test(l)) out.education.push({ institution: d1[1].trim(), area: d1[3]?.trim() || null, endDate: null, degree: deg(d1[2]) });
       else if (d2) out.education.push({ institution: d2[3].trim(), area: d2[2].trim(), endDate: null, degree: deg(d2[1]) });
+      else {
+        // OncePlatform: the institution and the degree on two lines, no year: "University of Alpha, Novi Sad" /
+        // "Bachelor of Civil Engineering" (either order)
+        const nx = ed[i + 1] || '';
+        const INST = /universit|университет|institut|институт|academy|академ|college|колледж/iu;
+        const DEG_LINE = /^(bachelor|master|b\.?\s?sc|m\.?\s?sc|бакалавр|магистр)\p{L}*\.?(?:\s+(?:of|in|по)\s+|\s*[,:–-]\s*)(.{3,80}?)\.?$/iu;
+        const pair = !nx.match(YEARS) && ((INST.test(l) && !l.includes(':') && DEG_LINE.exec(nx) && [l, DEG_LINE.exec(nx)]) || (INST.test(nx) && !nx.includes(':') && DEG_LINE.exec(l) && [nx, DEG_LINE.exec(l)]));
+        if (pair) {
+          const parts = pair[0].split(/,\s*/).filter(Boolean);
+          while (parts.length > 1 && parts[parts.length - 1].split(' ').length <= 2 && cityOf(parts[parts.length - 1]) != null) parts.pop();
+          out.education.push({ institution: parts.join(', '), area: pair[1][2].trim(), endDate: null, degree: /^(?:b|бак)/iu.test(pair[1][1]) ? 'bachelor' : 'master' });
+          i += 1;
+        }
+      }
       continue;
     }
     let txt = l.replace(YEARS, ' ').replace(/(?<![\p{L}])(?:жж?|гг?)\.(?![\p{L}])/gu, ' ').replace(/\s+/g, ' ').replace(new RegExp(`\\s*${DASH}\\s*(?=,|$)`, 'g'), '').replace(/^[\s,|;:()\-\u2013\u2014]+|[\s,|;:()\-\u2013\u2014]+$/g, '').trim();

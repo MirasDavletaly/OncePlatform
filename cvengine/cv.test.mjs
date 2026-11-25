@@ -551,8 +551,8 @@ test('layouts: numbered headings, a table read column by column, "since 2023 —
 2024-2025 гг. ТОО «Эпсилон» г. Актау «Месторождение» слесарь по монтажу трубопроводов;
 `);
   assert.deepEqual(q.work.map((w) => [w.position, w.name]).sort((a, b) => a[0].localeCompare(b[0])), [
-    ['монтажник трубопроводов', 'ТОО «Гамма»'],
-    ['слесарь по монтажу трубопроводов', 'ТОО «Эпсилон»'],
+    ['монтажник трубопроводов', 'Гамма'],
+    ['слесарь по монтажу трубопроводов', 'Эпсилон'],
     ['Слесарь-сварщик', 'ОГПК Альфа п.Бета'],
     ['Трубомонтажник', 'Дельта'],
   ]);
@@ -663,6 +663,263 @@ English:  Above average
   // a bullet with the company, a dash, the place and the title: the bullet rule first
   const b = parse('Ivan Petrov\n\nWORK EXPERIENCE\n2003 – 2007\n• ESS / Compass Group – Nigeria/Sudan : Area Camps Manager.\nRan the camps.\n').work[0];
   assert.deepEqual([b.position, b.name], ['Area Camps Manager', 'ESS / Compass Group']);
+});
+
+test('layouts: a form with labelled fields (start/end date, company name, position, job duties)', () => {
+  const p = parse(`Ivan Petrov Ivanovich
+E-mail: ivan@example.com
+Mobile phone: 87010000000
+Date of birth: 01.01.1990
+Citizenship: Kazakhstan
+City: Atyrau, Atyrau region
+Education and qualification_______________________________________________
+Start date: 01.09.2008 End date: 01.06.2012
+Institution name: Alpha State University
+Country: Kazakhstan
+Degree: Bachelor
+Specialty: Electrical Engineering
+Qualification: Engineer
+Additional info:
+Work experience_______________________________________________
+Start date: 01.03.2015 End date: 01.12.2018
+Company name: ТОО "Альфа"
+Position: Электрик
+Job Duties: Монтаж электрооборудования.
+Additional info: -
+Start date: 01.01.2019 Up to present End date: -
+Company name: ТОО "Бета"
+Position: Мастер электрик
+Job Duties: Руководство бригадой.
+Additional info: -
+Language skills_____________________________________________
+English: Basic
+Kazakh: Fluent
+`);
+  assert.equal(p.basics.name, 'Ivan Petrov Ivanovich');
+  assert.deepEqual(p.education.map((e) => [e.institution, e.area, e.degree, e.endDate]), [['Alpha State University', 'Electrical Engineering', 'bachelor', '2012']]);
+  assert.deepEqual(p.work.map((w) => [w.position, w.name, w.startDate, w.endDate]).sort((a, b) => a[2].localeCompare(b[2])), [
+    ['Электрик', 'Альфа', '2015-03', '2018-12'],
+    ['Мастер электрик', 'Бета', '2019-01', null],
+  ]);
+  assert.match(p.work.find((w) => w.name === 'Альфа').summary, /^Монтаж/);
+  assert.deepEqual(p.languages.map((l) => l.language).sort(), ['en', 'kk']);
+  // the label on its line and the value on the next
+  const pairs = parse(`Ivan Petrov
+WORK EXPERIENCE
+Job title
+HR Specialist
+Period
+01.12.2022-01.05.2024
+company
+Alpha Services Limited LLP, Atyrau
+job duties
+- Hiring of staff;
+- Keeping records.
+Job title
+Logistics Specialist
+Period
+01.05.2024-present
+company
+Beta Systems LLP, Aksai
+job duties
+- Shipping of cargo.
+`);
+  assert.deepEqual(pairs.work.map((w) => [w.position, w.name, w.startDate, w.endDate]).sort((a, b) => a[2].localeCompare(b[2])), [
+    ['HR Specialist', 'Alpha Services Limited LLP', '2022-12', '2024-05'],
+    ['Logistics Specialist', 'Beta Systems LLP', '2024-05', null],
+  ]);
+  assert.deepEqual(pairs.work.map((w) => w.location?.city).sort(), ['aksai', 'atyrau']); // the town stays as the location
+  // the company above "Position" / its value; a name in capitals with the title in small letters
+  const pos = parse('Ivan Petrov\nWork Experience\n2021 – present\nJSC"Alpha Stroy" (Pipelines zone 5)\nAtyrau\nPosition\nOperator, Hydrotesting\nHydrotests of pipelines.\n');
+  assert.deepEqual(pos.work.map((w) => [w.position, w.name]), [['Operator, Hydrotesting', 'JSC"Alpha Stroy" (Pipelines zone 5)']]);
+  const caps = parse('Иван Петров\nОпыт работы\n2010 – 2016 Ventis Engineering трубомонтажник\n2016 – 2018 ДельтаКарьер трубомонтажник\n');
+  assert.deepEqual(caps.work.map((w) => [w.position, w.name]).sort((a, b) => (a[1] < b[1] ? -1 : 1)), [['трубомонтажник', 'Ventis Engineering'], ['трубомонтажник', 'ДельтаКарьер']]);
+  // a stacked header under the period: company, town and country, then the title (wrapped)
+  const stacked = parse('Petar Novak\nCAREER HISTORY\nApr 2011 – July 2011\nOmega\nKazan, Russian\nFederation\nConstruction\nSupervisor\nResponsibilities/Tasks: site supervision.\nOct 2010 – Apr 2011\nSigma Works\nKazan, Russian\nFederation\nChief Engineer\nOil terminal project.\n');
+  assert.deepEqual(stacked.work.map((w) => [w.position, w.name]), [['Construction Supervisor', 'Omega'], ['Chief Engineer', 'Sigma Works']]);
+  const stacked2 = parse('Petar Novak\nCAREER HISTORY\nApr 2010 – May 2010\nSigma, Novy Urengoy, Rus.\nGas plant,\nRussian Federation\nChief Engineer\nMar 2007 – Oct 2007\nAlpha, Kazan,\nphone lines, etc.\nResponsibilities/Tasks: Chief Engineer reporting to Project Manager.\nApr 1999 – Jun 1999\nZeta, Novi Sad,\nSerbia, Chief Engineer\nRefinery in Novi Sad, Serbia\n');
+  assert.deepEqual(stacked2.work.map((w) => [w.position, w.name]), [['Chief Engineer', 'Sigma'], [null, 'Alpha'], ['Chief Engineer', 'Zeta']]);
+  // the period repeated under the header, a sentence before the company, the title over a company without a legal form
+  const repeated = parse('Ivan Petrov\nProfessional experience\nJuly 2025 - present\nWide professional experience with key clients and partners driven by\nlarge projects.\n“Alpha Beta Gamma” LLP, Astana, Kazakhstan\nProject management support.\nNov 2017 – Sep 2019\nLead Project Engineer\nDelta Group, Atyrau, Kazakhstan\nNovember 2017 – September 2019\nDesign reviews.\nJun 2009 - Jul 2011\nProject Manager\nOmega Sigma Company, Aktau, Kazakhstan\nConstruction of a plant.\n');
+  assert.deepEqual(repeated.work.map((w) => [w.startDate, w.position, w.name]), [
+    ['2025-07', null, 'Alpha Beta Gamma'], ['2017-11', 'Lead Project Engineer', 'Delta Group'], ['2009-06', 'Project Manager', 'Omega Sigma Company']]);
+  // the place and the quoted company on one line, the title under it with a full stop; "Location:" and "Profession:"
+  const located = parse('Ivan Petrov\nWork experience\nSeptember 2006 – May 2007\nAtyrau region, Tengiz, “Alpha – Beta” JSC.\nConstruction of a gas plant\nHSE Engineer.\nResponsibility:\nSafety briefings.\nFebruary 1999 – May 2000\nLocation: Omega field, “AB-Gamma” LLP.\nProfession: Carpenter\n');
+  assert.deepEqual(located.work.map((w) => [w.position, w.name]), [['HSE Engineer', 'Alpha – Beta'], ['Carpenter', 'AB-Gamma']]);
+  // "MM-YYYY" dates, "period – Company" with the title on the next line, the town after the company
+  const hyph = parse('Ivan Petrov\nWork Experience:\n09-2024 - present – AB CD.E Group - Atyrau\nSite Manager\n01-2020 - 08-2024 - Kappa\nRigger Grade 5\n05-2008 – 06-2010 – Omega Sigma LLP\nPump Operator Grade.\nLanguage:\nKazakh (native)\n');
+  assert.deepEqual(hyph.work.map((w) => [w.startDate, w.endDate, w.position, w.name]), [
+    ['2024-09', null, 'Site Manager', 'AB CD.E Group'], ['2020-01', '2024-08', 'Rigger Grade 5', 'Kappa'], ['2008-05', '2010-06', 'Pump Operator Grade', 'Omega Sigma']]);
+  // education on two lines without a year
+  const eduPair = parse('Petar Novak\nEDUCATION\nUniversity of Alpha, Novi Sad\nBachelor of Civil Engineering\nLANGUAGES\nEnglish: fluent\n');
+  assert.deepEqual(eduPair.education.map((e) => [e.institution, e.area, e.degree ?? null]).slice(0, 1), [['University of Alpha, Novi Sad', 'Civil Engineering', 'bachelor']]);
+  // a company glued in front of the title
+  const glued = parse('Иван Петров\nОпыт работы\n06.2023-02.2024 Северный филиал АО ДЕЛЬТА Трубомонтажник 4-го разряда\n06.2026-08.2026 КРМА Электромонтажник 4-го разряда\n01.2015-01.2016 QXSE Instrument Equipment (Lead Field Service Engineer)\n');
+  assert.deepEqual(glued.work.map((w) => [w.position, w.name]), [
+    ['Трубомонтажник 4-го разряда', 'Северный филиал АО ДЕЛЬТА'],
+    ['Электромонтажник 4-го разряда', 'КРМА'],
+    ['QXSE Instrument Equipment (Lead Field Service Engineer)', null],
+  ]);
+  // a quote right after the period starts the company
+  const q = parse('Иван Петров\nОпыт работы:\n05.2015-06.2017 г. ТОО «Альфа» монтажник;\n07.2019-11.2019 г. «Омега» Аксай Трубомонтажник;\n');
+  assert.equal(q.work.length, 2, JSON.stringify(q.work.map((w) => [w.startDate, w.position, w.name])));
+  // one job only is a job too
+  const one = parse('Ivan Petrov\nWork experience______\nStart date: 01.09.2019 Up to present End date: -\nCompany name: АО "Гамма"\nPosition: Инженер\nJob Duties: Проектирование.\n');
+  assert.deepEqual(one.work.map((w) => [w.position, w.name, w.startDate, w.endDate]), [['Инженер', 'Гамма', '2019-09', null]]);
+});
+
+test('layouts: inline headings, name labels, a contact line with the name, a headline, jobs without a heading', () => {
+  const inline = parse(`Резюме
+Ф.И.О: Иванов Иван Иванович
+Дата рождения: 01.01.1985г
+Образование: Средне-специальное.
+Опыт работы: 2010-2015 г. – монтажник АО «Альфа-Строй»
+2015-2018 г. – ТОО «Бета Сервис» слесарь
+Знание языков: казахский – родной
+русский – свободно
+`);
+  assert.equal(inline.basics.name, 'Иванов Иван Иванович');
+  assert.deepEqual(inline.work.map((w) => [w.position, w.name, w.startDate]).sort((a, b) => a[2].localeCompare(b[2])), [
+    ['монтажник', 'Альфа-Строй', '2010-01'],
+    ['слесарь', 'Бета Сервис', '2015-01'],
+  ]);
+  assert.deepEqual(inline.languages.map((l) => l.language).sort(), ['kk', 'ru']);
+
+  const applied = parse('Position Applied: Pipe Fitter\nName: Ivan Petrov\nAddress: Atyrau City\nTel. No. / Mob. No.: +7 701 000 0000\nDate of Birth: 01-Jan-1990\n');
+  assert.deepEqual([applied.basics.name, applied.basics.label], ['Ivan Petrov', 'Pipe Fitter']);
+  const info = parse('CURRICULUM VITAE\nAtyrau City, Kazakhstan\nPERSONAL INFORMATION:\nName: Ivan A. Petrov\nNationality: Kazakh\n');
+  assert.equal(info.basics.name, 'Ivan A. Petrov');
+  const pipes = parse('Ivan Petrov | Atyrau, Kazakhstan | +7 701 000 0000 | ivan@example.com\nProfessional Summary\nEngineer with 10 years of experience.\n');
+  assert.equal(pipes.basics.name, 'Ivan Petrov');
+  const headline = parse('IVAN PETROV, B.SC MECHANICAL ENGINEER FROM SPLIT, CROATIA\nEDUCATION\nUniversity of Split\n');
+  assert.equal(headline.basics.name, 'IVAN PETROV');
+  assert.match(headline.basics.label || '', /^MECHANICAL ENGINEER$/i);
+  const column = parse('Личные данные\nФ.И.О.:\nДата рождения:\nНациональность:\nПетров Пётр Петрович\n01.01.2000\nказах\nОбразование\n2018-2022\nАльфа Университет\n');
+  assert.equal(column.basics.name, 'Петров Пётр Петрович');
+
+  const hh = parse(`Иванов Иван
++7 (701) 0000000
+ivan@example.com
+Ноябрь 2024 —
+настоящее время
+1 год 1 месяц
+ТОО Альфа
+специалист по закупкам
+Закупки материалов.
+Январь 2021 —
+Март 2024
+3 года 3 месяца
+ТОО Бета Сервис
+Мастер участка
+Руководство работами.
+`);
+  assert.deepEqual(hh.work.map((w) => [w.position, w.name, w.startDate, w.endDate]).sort((a, b) => a[2].localeCompare(b[2])), [
+    ['Мастер участка', 'ТОО Бета Сервис', '2021-01', '2024-03'],
+    ['специалист по закупкам', 'ТОО Альфа', '2024-11', null],
+  ]);
+});
+
+test('layouts: "WORK HISTORY", a heading split over two lines, dates with underscores, "г." after dates', () => {
+  const p = parse(`JOHN SMITH
+PROFESSIONAL
+SUMMARY
+Engineer with 20 years of experience in projects.
+WORK HISTORY
+PROJECT MANAGER & TECHNICAL DIRECTOR
+JUNE 2024 _Present _-1
+ALPHA ENGINEERING LLC
+SERBIA
+• Led engineering projects.
+SITE ENGINEER
+MARCH 2019 _ MAY 2024
+GAMMA CONSTRUCTION LLC
+• Supervised works.
+`);
+  assert.match(p.basics.summary || '', /^Engineer with 20 years/);
+  assert.deepEqual(p.work.map((w) => [w.position, w.name, w.startDate, w.endDate]).sort((a, b) => a[2].localeCompare(b[2])), [
+    ['SITE ENGINEER', 'GAMMA CONSTRUCTION', '2019-03', '2024-05'],
+    ['PROJECT MANAGER & TECHNICAL DIRECTOR', 'ALPHA ENGINEERING', '2024-06', null],
+  ]);
+  // the end of a wrapped sentence is no heading; two months of one year; "LTD." with its stop
+  const h = parse(`JOHN SMITH
+WORK HISTORY
+PROJECT MANAGER
+JUNE 2024 _Present _-1
+ALPHA ENGINEERING LLC
+• Managed engineering
+projects.
+SITE MANAGER
+FEB-DEC 2023
+BETA BUILD LTD.
+• Ran the site.
+HEAD OF QUALITY
+OCT 2021-JAN 2023
+GAMMA WORKS LTD.
+• Quality control.
+`);
+  assert.deepEqual(h.work.map((w) => [w.position, w.startDate, w.endDate]).sort((a, b) => a[1].localeCompare(b[1])), [
+    ['HEAD OF QUALITY', '2021-10', '2023-01'],
+    ['SITE MANAGER', '2023-02', '2023-12'],
+    ['PROJECT MANAGER', '2024-06', null],
+  ]);
+  const g = parse('Иванов Иван\nОпыт работы\n01.02.2010-03.04.2015 г. ТОО «Альфа Строй»\nДолжность: Слесарь по ремонту\n05.2015-06.2018 г. ТОО «Бета»\nДолжность: Мастер\n');
+  assert.deepEqual(g.work.map((w) => [w.position, w.name, w.startDate, w.endDate]), [
+    ['Слесарь по ремонту', 'Альфа Строй', '2010-02', '2015-04'],
+    ['Мастер', 'Бета', '2015-05', '2018-06'],
+  ]);
+});
+
+test('layouts: company over title over period, the period at the end of the line, "CO" companies', () => {
+  const p = parse(`John Smith
+WORK EXPERIENCE
+Alpha Build LLP
+Engineer Technician
+June 2024 – Present
+• Supervised site works.
+• Prepared reports.
+Beta Energy LLP
+Site Engineer
+September 2023 – May 2024
+• Field inspections.
+`);
+  assert.deepEqual(p.work.map((w) => [w.position, w.name, w.startDate, w.endDate]), [
+    ['Engineer Technician', 'Alpha Build', '2024-06', null],
+    ['Site Engineer', 'Beta Energy', '2023-09', '2024-05'],
+  ]);
+  const co = parse(`John Smith
+PROFESSIONAL EXPERIENCE
+ARABIAN COMPANY FOR WATER CO
+Lead Mechanical Engineer | September 2024 - Present
+- Led the mechanical works.
+GAMMA CONTRACTING CO
+Mechanical Engineer | September 2021 - September 2024
+- Installed pumps.
+`);
+  assert.deepEqual(co.work.map((w) => [w.position, w.name, w.startDate]), [
+    ['Lead Mechanical Engineer', 'ARABIAN COMPANY FOR WATER', '2024-09'],
+    ['Mechanical Engineer', 'GAMMA CONTRACTING', '2021-09'],
+  ]);
+  // the period at the end of the company line, "г" without its stop
+  const ocr = parse(`Иван Петров
+Трудовая деятельность: ТОО "Альфа Строй Сервис" г.Атырау 2009-2015г
+Должность: Монтажник технологических трубопроводов.
+Основные обязанности: Монтаж трубопроводов.
+АО «Бетамонтаж» г.Актау 2015-2016г
+Должность:Монтажник ТТ.
+Компания: «Гамма Строй К2» 2016г-2017г Атырау
+Должность:Монтажник ТТ.
+`);
+  assert.deepEqual(ocr.work.map((w) => [w.startDate, w.endDate]), [['2009-01', '2015-12'], ['2015-01', '2016-12'], ['2016-01', '2017-12']]);
+  assert.ok(ocr.work.every((w) => /^Монтажник/.test(w.position || '') && w.name), JSON.stringify(ocr.work.map((w) => [w.position, w.name])));
+  const end = parse(`Иван Петров
+ОПЫТ РАБОТЫ
+Альфа Софт — Python-разработчик Октябрь 2025 — настоящее время · 9 месяцев
+Разработка сервисов.
+Бета Групп — Аналитик данных Июль 2023 — Октябрь 2025 · 2 года 3 месяца
+Отчёты и дашборды.
+`);
+  assert.deepEqual(end.work.map((w) => [w.startDate, w.endDate]), [['2025-10', null], ['2023-07', '2025-10']]);
+  assert.ok(end.work.every((w) => w.position && w.name), JSON.stringify(end.work.map((w) => [w.position, w.name])));
 });
 
 test('cli answers JSON on stdout', () => {

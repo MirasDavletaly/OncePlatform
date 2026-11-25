@@ -162,10 +162,25 @@ func TestNameAfterParse(t *testing.T) {
 		{" Curriculum Vitae ", "x", "Ivan Petrov", "Ivan Petrov"},
 		{"Иванов Пётр (проверено)", "Иванов Пётр", "Иванов Пётр", "Иванов Пётр (проверено)"}, // typed by a person
 		{"Old Parse", "Old Parse", "", "Old Parse"},                                          // no name found now
+		{"IVAN PETROV, B.SC MECHANICAL ENGINEER FROM SPLIT", "", "IVAN PETROV", "IVAN PETROV"}, // a headline
+		{"Ivan Petrov, ex-Alpha", "x", "Anna Smith", "Ivan Petrov, ex-Alpha"},                // a comma, another person: typed
 	} {
 		if got := nameAfterParse(c.stored, c.prev, c.parsed); got != c.want {
 			t.Errorf("nameAfterParse(%q, %q, %q) = %q, want %q", c.stored, c.prev, c.parsed, got, c.want)
 		}
+	}
+}
+
+func TestAnonymizeHeadlineName(t *testing.T) {
+	out := string(anonymizeProfile(json.RawMessage(`{"basics":{"name":"IVAN PETROV"},"work":[{"position":"Civil Engineer","name":"Alpha"}]}`), "IVAN PETROV, B.SC MECHANICAL ENGINEER FROM SPLIT"))
+	if !strings.Contains(out, "Civil Engineer") || strings.Contains(out, "PETROV") {
+		t.Fatalf("the headline's words after the comma must stay, the name must go: %s", out)
+	}
+}
+
+func TestFragmented(t *testing.T) {
+	if !fragmented(strings.Repeat("слово\n", 30)) || fragmented(strings.Repeat("Опыт работы в компании\n", 30)) || fragmented("одно\nдва\n") {
+		t.Fatal("fragmented")
 	}
 }
 

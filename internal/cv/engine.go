@@ -198,7 +198,7 @@ func extractCV(ctx context.Context, tmpDir, path, ext string) (string, bool, err
 		return files.SanitizeText(t), true, err
 	case "pdf":
 		t, err := files.ExtractText(ctx, path, ext)
-		if err == nil && letters(t) >= 100 {
+		if err == nil && letters(t) >= 100 && !fragmented(t) {
 			return t, false, nil
 		}
 		o, oerr := ocrPDF(ctx, tmpDir, path)
@@ -207,6 +207,10 @@ func extractCV(ctx context.Context, tmpDir, path, ext string) (string, bool, err
 				return t, false, nil // a short text CV is better than nothing
 			}
 			return "", true, oerr
+		}
+		// a text layer scattered word by word is read from the page images instead, unless they give much less
+		if err == nil && letters(t) >= 100 && letters(o) < letters(t)*7/10 {
+			return t, false, nil
 		}
 		return files.SanitizeText(o), true, nil
 	default:
@@ -233,6 +237,22 @@ func checkImageSize(path string) error {
 		return fmt.Errorf("the image is too large to recognise (%d×%d pixels)", cfg.Width, cfg.Height)
 	}
 	return nil
+}
+
+// fragmented: a PDF text layer with one word per line (every word its own text object, words split and years glued) -
+// at least 20 lines, 60% of them without a space.
+func fragmented(s string) bool {
+	n, single := 0, 0
+	for _, l := range strings.Split(s, "\n") {
+		if l = strings.TrimSpace(l); l == "" {
+			continue
+		}
+		n++
+		if !strings.ContainsAny(l, " \t") {
+			single++
+		}
+	}
+	return n >= 20 && single*10 >= n*6
 }
 
 func letters(s string) int {
