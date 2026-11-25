@@ -616,7 +616,7 @@ function columnJobs(ex) {
 }
 // OncePlatform: «С 2023 года — директор ТОО «…»» - место работы с этого года по настоящее время
 const SINCE = /^(?:с|since|from)\s+((?:19|20)\d{2})\s*(?:года|г\.|year)?\s*[—–-]\s*(.+?)\.?$/iu;
-const sinceLine = (l) => { const m = SINCE.exec(l); return m && hasCompany(m[2]) ? `${m[1]} - настоящее время | ${m[2]}` : l; };
+const sinceLine = (l) => { const m = SINCE.exec(l); return m && hasCompany(m[2]) ? `${m[1]} - настоящее время | ${m[2].charAt(0).toUpperCase()}${m[2].slice(1)}` : l; };
 const wordKey = (x) => fold(x).split(/[^\p{L}]+/u).filter(Boolean).sort().join(' ');
 
 export function parseResume(text0, { matcher, protect, ocr = false } = {}) {

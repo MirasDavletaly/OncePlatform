@@ -521,9 +521,15 @@ test('layouts: numbered headings, a table read column by column, "since 2023 —
     ['Инженерные изыскания', 'Гамма', '2012-01', '2012-09'],
     ['Самостоятельная профессиональная деятельность', 'Иванов П.П.', '2012-12', null],
     ['Прораб', 'Дельта', '2019-09', '2020-05'],
-    ['директор', 'Эпсилон', '2023-01', null],
+    ['Директор', 'Эпсилон', '2023-01', null],
   ]);
+  // positions: one for "Ведущий геодезист" and "Геодезист" (the title held longest), no self-employment
+  const pos = p.meta.positions.map((x) => x.title);
+  assert.deepEqual(pos.slice(0, 2), ['Ведущий геодезист', 'Директор'], JSON.stringify(p.meta.positions));
+  assert.ok(!pos.some((x) => /Самостоятельная|^Геодезист$/.test(x)), pos.join(', '));
+  assert.equal(p.meta.positions[0].years, 5.6); // 10.2005-03.2006 and 09.2006-11.2011 together
   const director = p.work.find((w) => w.name === 'Эпсилон');
+  assert.equal(director.position, 'Директор');
   assert.match(director.summary, /Организация производственных процессов/);
   assert.doesNotMatch(director.summary, /ИВАНОВ|example\.com|7701/);
   assert.deepEqual(p.projects.map((x) => [x.name, x.summary]), [
@@ -535,6 +541,23 @@ test('layouts: numbered headings, a table read column by column, "since 2023 —
   // what the line under the name may be instead of a title: an address or a sentence
   for (const bad of ['РК, Атырауская обл.', 'ЗКО, Бурлинский р-н, г.Аксай', 'Опыт работы в строительстве жилых и промышленных объектов более десяти лет.']) assert.ok(badLabel(bad, null), bad);
   assert.ok(!badLabel('Начальник районных электросетей', null));
+  // "2015-2017 гг. Company. Title;": the year word out, the company and the title apart, no place in the title
+  const q = parse(`ИВАНОВ ИВАН ИВАНОВИЧ
+
+ОПЫТ РАБОТЫ
+2015-2017 гг. ОГПК Альфа п.Бета. Слесарь-сварщик;
+2018-2020 гг. ТОО «Гамма» монтажник трубопроводов;
+2021-2023 гг. «Дельта» Аксай Трубомонтажник;
+2024-2025 гг. ТОО «Эпсилон» г. Актау «Месторождение» слесарь по монтажу трубопроводов;
+`);
+  assert.deepEqual(q.work.map((w) => [w.position, w.name]).sort((a, b) => a[0].localeCompare(b[0])), [
+    ['монтажник трубопроводов', 'ТОО «Гамма»'],
+    ['слесарь по монтажу трубопроводов', 'ТОО «Эпсилон»'],
+    ['Слесарь-сварщик', 'ОГПК Альфа п.Бета'],
+    ['Трубомонтажник', 'Дельта'],
+  ]);
+  assert.deepEqual(parse('Ivan Petrov\n\nWORK EXPERIENCE\n2015 - 2018 Sr. Engineer, Alpha LLP\n').work.map((w) => w.position), ['Sr. Engineer']);
+  assert.equal(parse('Ivan Petrov\n\nWORK EXPERIENCE\n2021 - 2025 Bachelor of Technology (B. Tech) — Mechanical Engineering\n').work[0]?.position?.startsWith('Tech)'), false);
 });
 
 test('cli answers JSON on stdout', () => {

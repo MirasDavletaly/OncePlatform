@@ -51,6 +51,12 @@ const CITY_LIST = [
   ['ekibastuz', 'KZ', 'Ekibastuz', 'Экибастуз', 'Екібастұз'],
   ['zhezkazgan', 'KZ', 'Zhezkazgan', 'Жезказган', 'Жезқазған'],
   ['temirtau', 'KZ', 'Temirtau', 'Темиртау', 'Теміртау'],
+  // OncePlatform: oil and gas towns the team's candidates work in
+  ['aksai', 'KZ', 'Aksai', 'Аксай', 'Ақсай', 'Aksay'],
+  ['zhanaozen', 'KZ', 'Zhanaozen', 'Жанаозен', 'Жаңаөзен', 'Новый Узень'],
+  ['kulsary', 'KZ', 'Kulsary', 'Кульсары', 'Құлсары'],
+  ['beineu', 'KZ', 'Beineu', 'Бейнеу', 'Beyneu'],
+  ['tengiz', 'KZ', 'Tengiz', 'Тенгиз', 'Теңіз'],
   ['moscow', 'RU', 'Moscow', 'Москва', 'Мәскеу'],
   ['spb', 'RU', 'Saint Petersburg', 'Санкт-Петербург', 'Петербург', 'St. Petersburg', 'St Petersburg'],
   ['novosibirsk', 'RU', 'Novosibirsk', 'Новосибирск'],

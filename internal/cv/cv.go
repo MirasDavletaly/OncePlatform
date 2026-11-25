@@ -73,6 +73,19 @@ type Candidate struct {
 // Code is the reference shown instead of the name, e.g. CV-0007.
 func Code(n int) string { return fmt.Sprintf("CV-%04d", n) }
 
+// docTitle: a document title above the name, never a name (Go matches case-insensitively in any script; PostgreSQL's
+// ~* depends on the database locale and missed "ПЕРСОНАЛЬНОЕ").
+var docTitle = regexp.MustCompile(`(?i)^\s*(персональное\s+портфолио|портфолио|резюме|түйіндеме|curriculum\s+vitae|cv|resume|résumé|personal\s+portfolio)\s*$`)
+
+// nameAfterParse: the name follows the parse unless a person typed it - taken when the stored one is empty, equal to
+// the name of the previous parse or a document title an older parser took for a name.
+func nameAfterParse(stored, prevParsed, parsed string) string {
+	if parsed != "" && (stored == "" || stored == prevParsed || docTitle.MatchString(stored)) {
+		return parsed
+	}
+	return stored
+}
+
 // Service manages candidates and requirements.
 type Service struct {
 	pool     *pgxpool.Pool
@@ -924,9 +937,14 @@ func (s *Service) process(ctx context.Context, id string) {
 		} `json:"basics"`
 	}
 	_ = json.Unmarshal(profile, &p)
+	var storedName, prevParsed string
+	if err := s.pool.QueryRow(ctx, `SELECT full_name, coalesce(profile->'basics'->>'name', '') FROM candidates WHERE id = $1`, id).Scan(&storedName, &prevParsed); err != nil {
+		s.log.Error("cv profile not stored", "candidate_id", id, "error", err.Error())
+		return
+	}
 	if _, err := s.pool.Exec(ctx, `UPDATE candidates SET status = 'ready', error = '', ocr = $2, cv_text = $3, profile = $4,
-		full_name = CASE WHEN full_name = '' THEN $5 ELSE full_name END, updated_at = now()
-		WHERE id = $1 AND status = 'pending'`, id, ocr, text, []byte(profile), truncate(p.Basics.Name, 200)); err != nil {
+		full_name = $5, updated_at = now()
+		WHERE id = $1 AND status = 'pending'`, id, ocr, text, []byte(profile), nameAfterParse(storedName, prevParsed, truncate(p.Basics.Name, 200))); err != nil {
 		s.log.Error("cv profile not stored", "candidate_id", id, "error", err.Error())
 		return
 	}

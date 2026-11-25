@@ -632,7 +632,7 @@ export const ru: Dict = {
     reparseConfirm: 'Разобрать резюме заново? Ручные исправления профиля будут заменены.',
     text: 'Распознанный текст',
     noText: 'Текста нет.',
-    exportDocx: 'Word, {lang}',
+    exportDocx: 'Стандартное резюме, {lang}',
     letterhead: 'Бланк',
     noLetterhead: 'Без бланка',
     editLetterheads: 'Изменить бланки',

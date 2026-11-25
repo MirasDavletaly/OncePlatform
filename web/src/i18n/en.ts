@@ -631,7 +631,7 @@ export const en = {
     reparseConfirm: 'Parse the CV again? Manual corrections of the profile will be replaced.',
     text: 'Recognised text',
     noText: 'No text.',
-    exportDocx: 'Word, {lang}',
+    exportDocx: 'Standard CV, {lang}',
     letterhead: 'Letterhead',
     noLetterhead: 'No letterhead',
     editLetterheads: 'Edit letterheads',

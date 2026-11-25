@@ -51,6 +51,12 @@ const r1 = (x) => Math.round(x * 10) / 10;
 const levelOf = (years) => (years >= 5 ? 'senior' : years >= 2 ? 'middle' : 'junior');
 const workPeriods = (p) => (p.work || []).map((w) => ({ start: w.startDate, end: w.endDate, prof: w.prof, approx: !!w.approx }));
 
+// not a position to offer: self-employment, a sole proprietorship
+const NOT_POSITION = /самостоятельн\p{L}*\s+(?:профессиональн\p{L}*\s+)?деятельност|индивидуальн\p{L}*\s+предпринимател|self[\s-]?employ|sole\s+proprietor|own\s+business|собственн\p{L}*\s+бизнес/iu;
+// "Ведущий геодезист" and "Геодезист" are one position: years counted together, the title held longest shown
+const SENIORITY = /^(?:ведущий|старший|главный|младший|senior|lead|junior|principal|chief|sr\.?|jr\.?)\s+/iu;
+const cap = (s) => s.charAt(0).toUpperCase() + s.slice(1);
+
 // Positions the candidate could take (up to four): professions of the (IT) taxonomy backed by real experience in them
 // or by most of their skills, then the job titles the candidate actually held, with the years in each - the only
 // suggestion for professions outside the taxonomy (an asset data engineer is not a "data analyst").
@@ -71,13 +77,20 @@ export function positions(p) {
   const held = new Map();
   for (const w of p.work || []) {
     const title = String(w.position || '').trim();
-    if (!title || title.length > 80 || tax.some((x) => x.prof === w.prof)) continue;
-    const key = fold(title);
-    if (!held.has(key)) held.set(key, { title, periods: [] });
-    held.get(key).periods.push({ start: w.startDate, end: w.endDate });
+    if (!title || title.length > 80 || NOT_POSITION.test(title) || tax.some((x) => x.prof === w.prof)) continue;
+    const key = fold(title.replace(SENIORITY, ''));
+    if (!held.has(key)) held.set(key, { titles: new Map(), periods: [] });
+    const h = held.get(key);
+    const period = { start: w.startDate, end: w.endDate };
+    h.periods.push(period);
+    if (!h.titles.has(title)) h.titles.set(title, []);
+    h.titles.get(title).push(period);
   }
   const own = [...held.values()]
-    .map(({ title, periods }) => ({ title, years: r1(totalMonths(periods) / 12) }))
+    .map(({ titles, periods }) => {
+      const [title] = [...titles].sort((a, b) => totalMonths(b[1]) - totalMonths(a[1]))[0];
+      return { title: cap(title), years: r1(totalMonths(periods) / 12) };
+    })
     .sort((a, b) => b.years - a.years)
     .map((x) => ({ ...x, level: levelOf(x.years) }));
   return [...tax, ...own].slice(0, 4);
@@ -143,6 +156,22 @@ export function fixJobs(p) {
   const work = [];
   for (const w of p.work) {
     const before = w.position;
+    // OncePlatform: "гг. ОГПК Альфа п.Бета. Слесарь-сварщик;" (the rest of "2015-2017 гг. …"): the year word and the
+    // semicolon out; the company before a full stop or a closing quote, the title after it, a place in front of the
+    // title out ("«Дельта» Аксай Трубомонтажник"). Not "Sr. Engineer": the company part has two words or quotes.
+    // Repeated: "ТОО «Альфа» г. Актау «Месторождение» слесарь …" - the company first, then the place and the field.
+    const closed = (s) => (s.match(/\(/g) || []).length === (s.match(/\)/g) || []).length;
+    for (let k = 0; k < 3 && w.position; k += 1) {
+      const pos = w.position.replace(/^(?:гг?|жж?)\.\s*/u, '').replace(/[;,\s]+$/u, '');
+      // a full stop after a word (not "B." of "(B. Tech)"), brackets closed on both sides
+      const m = /^(.+?(?:[»"”]|\p{L}{3}\.(?=\s+\p{Lu})))\s+(\p{L}.*)$/u.exec(pos);
+      w.position = pos || null;
+      if (!(m && isTitle(m[2]) && !isTitle(m[1]) && closed(m[1]) && closed(m[2]) && (/[«"“]/.test(m[1]) || m[1].split(/\s+/).length >= 2))) break;
+      const words = m[2].split(/\s+/);
+      while (words.length > 1 && isPlace(words[0])) words.shift();
+      const co = m[1].replace(/\.$/, '').trim();
+      [w.position, w.name] = [words.join(' '), w.name || (/^[«"“][^«»"“”]+[»"”]$/.test(co) ? co.slice(1, -1) : co)];
+    }
     // "• Universal Sodexho – Angola : Offshore Camp Manager." - the company and the title behind a bullet
     const bullet = /^[•▪●·*]\s*(.+)$/u.exec(w.position || '');
     if (bullet) {

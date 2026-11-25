@@ -154,6 +154,21 @@ func TestBuildDocx(t *testing.T) {
 	}
 }
 
+func TestNameAfterParse(t *testing.T) {
+	for _, c := range []struct{ stored, prev, parsed, want string }{
+		{"", "", "Иванов Пётр", "Иванов Пётр"},                                  // a new CV
+		{"Old Parse", "Old Parse", "Иванов Пётр", "Иванов Пётр"},                // nobody typed it
+		{"ПЕРСОНАЛЬНОЕ ПОРТФОЛИО", "Иванов Пётр", "Иванов Пётр", "Иванов Пётр"}, // an older parser's mistake
+		{" Curriculum Vitae ", "x", "Ivan Petrov", "Ivan Petrov"},
+		{"Иванов Пётр (проверено)", "Иванов Пётр", "Иванов Пётр", "Иванов Пётр (проверено)"}, // typed by a person
+		{"Old Parse", "Old Parse", "", "Old Parse"},                                          // no name found now
+	} {
+		if got := nameAfterParse(c.stored, c.prev, c.parsed); got != c.want {
+			t.Errorf("nameAfterParse(%q, %q, %q) = %q, want %q", c.stored, c.prev, c.parsed, got, c.want)
+		}
+	}
+}
+
 func TestLetterheadText(t *testing.T) {
 	if s, err := cleanLetterheadText("header", " Alpha LLP \r\n‮Astana\u0007\n\n"); err != nil || s != "Alpha LLP\nAstana" {
 		t.Fatalf("%q %v", s, err)
