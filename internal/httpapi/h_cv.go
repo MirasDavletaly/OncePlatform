@@ -28,6 +28,8 @@ func (a *api) cvRoutes(r chi.Router) {
 	r.Post("/cv/candidates/{id}/consent-file", a.uploadConsentFile)
 	r.Get("/cv/candidates/{id}/consent-file", a.consentFile)
 	r.Get("/cv/candidates/{id}/export.docx", a.exportCandidate)
+	r.Get("/cv/improvements", a.cvImprovements)
+	r.Post("/cv/improvements", a.applyCVImprovements)
 	r.Get("/cv/letterheads", a.listLetterheads)
 	r.Put("/cv/letterheads/{id}", a.saveLetterhead)
 	r.Get("/cv/documents", a.listDocuments)
@@ -337,6 +339,31 @@ func (a *api) exportCandidate(w http.ResponseWriter, r *http.Request) {
 	h.Set("Content-Security-Policy", "default-src 'none'; sandbox; frame-ancestors 'none'")
 	h.Set("Cache-Control", "private, no-store")
 	_, _ = w.Write(body)
+}
+
+func (a *api) cvImprovements(w http.ResponseWriter, r *http.Request) {
+	res, err := a.cv.Improvements(r.Context(), actor(r))
+	if err != nil {
+		a.writeError(w, r, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, res)
+}
+
+func (a *api) applyCVImprovements(w http.ResponseWriter, r *http.Request) {
+	var in struct {
+		IDs []string `json:"ids"`
+	}
+	if err := decode(w, r, &in); err != nil {
+		a.writeError(w, r, err)
+		return
+	}
+	n, err := a.cv.ApplyImprovements(r.Context(), actor(r), in.IDs)
+	if err != nil {
+		a.writeError(w, r, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"updated": n})
 }
 
 func (a *api) listLetterheads(w http.ResponseWriter, r *http.Request) {

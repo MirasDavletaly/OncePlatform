@@ -14,6 +14,7 @@ import {
 import { Dropzone } from '../../components/inputs'
 import { Badge, Button, Card, Checkbox, EmptyState, ErrorState, Field, Input, Loading, Modal, PageHeader, Select, useToast } from '../../components/ui'
 import { DocUploadModal, DocumentsPanel, useUploadToasts } from './documents'
+import { ImproveParsing } from './improve'
 
 const CV_ACCEPT = '.pdf,.docx,.txt,.png,.jpg,.jpeg'
 
@@ -207,6 +208,7 @@ export function CvListPage() {
         actions={
           can('cv.manage') && (
             <>
+              {can('admin.users') && <ImproveParsing />}
               <Button icon={<Award className="size-4" />} onClick={() => setAddingDocs(true)}>
                 {t.cv.docs.upload}
               </Button>

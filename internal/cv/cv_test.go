@@ -169,6 +169,26 @@ func TestNameAfterParse(t *testing.T) {
 	}
 }
 
+func TestImproves(t *testing.T) {
+	stored := countsOf(json.RawMessage(`{"basics":{"name":"A B"},"work":[{"name":"Alpha","position":"Engineer"},{"name":"Beta"}],"education":[{}]}`))
+	if stored != (ParseCounts{Jobs: 2, Titles: 1, Companies: 2, Education: 1, Name: true}) {
+		t.Fatalf("counts: %+v", stored)
+	}
+	for _, c := range []struct {
+		after ParseCounts
+		want  bool
+	}{
+		{ParseCounts{Jobs: 2, Titles: 2, Companies: 2, Education: 1, Name: true}, true},   // a title more
+		{ParseCounts{Jobs: 5, Titles: 5, Companies: 5, Education: 0, Name: true}, false},  // more jobs, the education lost
+		{ParseCounts{Jobs: 2, Titles: 1, Companies: 2, Education: 1, Name: true}, false},  // the same
+		{ParseCounts{Jobs: 3, Titles: 3, Companies: 3, Education: 1, Name: false}, false}, // the name lost
+	} {
+		if got := c.after.improves(stored); got != c.want {
+			t.Errorf("%+v improves %+v = %v", c.after, stored, got)
+		}
+	}
+}
+
 func TestLetterheadText(t *testing.T) {
 	if s, err := cleanLetterheadText("header", " Alpha LLP \r\n‮Astana\u0007\n\n"); err != nil || s != "Alpha LLP\nAstana" {
 		t.Fatalf("%q %v", s, err)
